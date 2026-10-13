@@ -1,0 +1,33 @@
+name: 🔧 작업
+description: 리팩터링, 문서, 설정, 환경 등 기능 외 작업
+body:
+  - type: markdown
+    attributes:
+      value: |
+        이슈를 만든 뒤 오른쪽 **Labels**에서 `documentation` 또는 `chore`를 선택해주세요.
+        (리팩터링, 테스트, 설정, 환경, 의존성 작업은 `chore`)
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: 개요
+      description: 무엇을, 왜 하는지 작성해주세요.
+    validations:
+      required: true
+
+  - type: textarea
+    id: tasks
+    attributes:
+      label: 작업 내용
+      value: |
+        - [ ] 
+        - [ ] 
+    validations:
+      required: true
+
+  - type: textarea
+    id: done
+    attributes:
+      label: 완료 조건
+    validations:
+      required: false

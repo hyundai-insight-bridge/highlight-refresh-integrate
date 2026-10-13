@@ -1,0 +1,51 @@
+name: 버그 제보
+description: 잘못 동작하는 부분을 알립니다.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        제목은 **증상이 드러나게** 작성해주세요. 예) `한글 PDF 업로드 시 인코딩 오류`
+
+  - type: textarea
+    id: description
+    attributes:
+      label: 버그 설명
+      description: 어떤 문제가 생겼는지 작성해주세요.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 재현 방법
+      value: |
+        1. 
+        2. 
+        3. 
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 기대 동작
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 에러 메시지 / 로그
+      description: 에러 메시지를 붙여주세요. **API 키 등 비밀 정보는 지워주세요.**
+      render: shell
+    validations:
+      required: false
+
+  - type: input
+    id: branch
+    attributes:
+      label: 브랜치 / 커밋
+      placeholder: 예) main, feat/#12-login
+    validations:
+      required: false
