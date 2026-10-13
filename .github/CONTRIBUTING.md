@@ -31,7 +31,13 @@ git push -u origin feat/#12-login
 
 5. GitHub에서 `main`을 대상으로 **Pull Request**를 생성합니다.
 6. 리뷰 코멘트를 반영하고 승인을 받으면 merge합니다.
-7. merge된 브랜치는 삭제합니다.
+7. merge된 원격 브랜치는 자동으로 삭제됩니다. 로컬 브랜치는 직접 삭제해주세요.
+   ```bash
+   git switch main
+   git pull --prune
+   git branch -d 브랜치이름
+   ```
+8. PR의 Update branch 버튼은 반드시 Update with merge commit을 선택하세요. (rebase 사용 금지)
 
 > 작업 중에 `main`이 업데이트되었다면 `git pull origin main`으로 내 브랜치에 반영한 뒤 충돌을 해결해주세요.
 
