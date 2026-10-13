@@ -1,0 +1,45 @@
+name: 기능 개발
+description: 새로운 기능을 추가합니다.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        제목은 **할 일이 드러나게** 작성해주세요. 예) `PDF 업로드 기능 추가`
+        이슈를 만든 뒤 오른쪽의 **Assignees**에 본인을 지정해주세요.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: 개요
+      description: 어떤 기능인지, 왜 필요한지 작성해주세요.
+    validations:
+      required: true
+
+  - type: textarea
+    id: tasks
+    attributes:
+      label: 작업 내용
+      description: 세부 작업을 체크리스트로 작성해주세요.
+      value: |
+        - [ ] 
+        - [ ] 
+    validations:
+      required: true
+
+  - type: textarea
+    id: done
+    attributes:
+      label: 완료 조건
+      description: 어떤 상태가 되면 완료인지 작성해주세요.
+      placeholder: 예) PDF를 업로드하면 벡터DB에 저장되고, 질문 시 해당 문서 내용으로 답변한다.
+    validations:
+      required: true
+
+  - type: textarea
+    id: refs
+    attributes:
+      label: 참고
+      description: 관련 문서, 링크, 이슈 등
+    validations:
+      required: false
