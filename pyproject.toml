@@ -1,0 +1,20 @@
+[project]
+name = "highlight-refresh-integrate"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "Hyeonsu Ryu",email = "hsoo112149@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+package-mode = false
+requires-poetry = ">=2.0,<3.0"
