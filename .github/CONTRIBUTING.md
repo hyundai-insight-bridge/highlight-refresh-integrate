@@ -85,6 +85,7 @@ git push -u origin feat/#12-login
 | `docs` | 문서 | `docs/#3-readme` |
 | `chore` | 설정, 환경, 의존성 | `chore/#8-add-ruff` |
 | `test` | 테스트 | `test/#25-retriever` |
+| `style` | UI | `sttyle/#44-update-ui` |
 
 > 이슈 번호는 GitHub가 자동으로 붙입니다. 이슈를 만든 뒤 **실제 번호를 확인**해서 사용하세요.
 
