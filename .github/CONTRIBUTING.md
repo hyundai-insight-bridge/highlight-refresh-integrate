@@ -45,7 +45,7 @@ git push -u origin feat/#12-login
 
 6. GitHub에서 `main`을 대상으로 **Pull Request**를 생성합니다. (템플릿을 채워주세요)
 7. 리뷰 코멘트를 반영하고 승인을 받으면 merge합니다.
-8. merge되면 원격 브랜치는 자동으로 삭제됩니다. **로컬 브랜치는 직접 정리**해주세요.
+8. merge되면 원격 브랜치와 로컬 브랜치는 **직접 정리**해주세요.
    ```bash
    git switch main
    git pull --prune
