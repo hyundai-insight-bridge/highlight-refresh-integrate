@@ -191,7 +191,27 @@ docs: README 실행 방법 추가
   ```
 - 패키지 추가·삭제는 가능하면 **별도 PR**로 올려주세요.
 
-## 10. 하지 말아야 할 것
+## 10. 코드 스타일
+
+[PEP 8](https://peps.python.org/pep-0008/)을 기준으로 작성합니다.
+
+### 네이밍 규칙
+
+| 대상 | 규칙 | 예시 |
+|---|---|---|
+| 클래스 | `PascalCase` | `PdfLoader`, `ChatService` |
+| 함수 · 메서드 | `snake_case` | `load_pdf()`, `get_answer()` |
+| 변수 · 인자 | `snake_case` | `user_query`, `chunk_size` |
+| 상수 | `UPPER_SNAKE_CASE` | `MAX_TOKENS`, `DEFAULT_MODEL` |
+| 모듈(파일) · 패키지 | 짧은 `snake_case` | `pdf_loader.py`, `retriever/` |
+| 내부용(private) | 앞에 `_` | `_parse_page()` |
+
+### 기타
+- 들여쓰기는 **탭을**을 사용합니다. (스페이스 4번 금지)
+- 기능별로 파일을 나누고, 실행 파일은 모듈을 불러와 실행하는 구조로 작성합니다.
+- 본인이 작성한 함수·클래스에는 **docstring 또는 주석**을 꼭 남깁니다.
+  
+## 11. 하지 말아야 할 것
 
 - ❌ API 키, 비밀번호, 토큰 등 **비밀 정보 커밋** (`.env`는 커밋하지 않고 `.env.example`만 커밋)
 - ❌ 노트북(`.ipynb`)을 **실행 결과가 남은 채로** 커밋
