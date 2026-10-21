@@ -1,6 +1,6 @@
 # 프로젝트 구조 (초안)
 
-> 상태: **초안 v0.2** · 팀 리뷰 후 확정
+> 상태: **초안 v0.2.1** · 팀 리뷰 후 확정
 > 기준 문서: `01. 프로젝트기획서_Insight Bridge.docx`, `기능명세서_경제분석보고서_AI요약서비스.xlsx`, `경제분석보고서_AI요약서비스_WBS` (Google Drive · 현대 1차 4팀_내부자료)
 > v0.2 변경: `app/` 바로 아래 폴더 20여 개 → **역할별 상위 그룹 6개**로 묶고, 명세서 패키지는 그 아래로 이동
 
@@ -217,27 +217,14 @@ presentation  →  application  →  rag · ai · infrastructure  →  core
 > ⚠️ 기능명세서 시트 제목의 담당자(예: "문서처리 – 팀원1 류현수", "화면통합 – 팀원6 장유빈")는 기획서 · WBS의 역할 분담과 다릅니다. 위 표는 **기획서 · WBS 기준**이며, 확정 후 명세서 시트 제목을 맞춰 주세요.
 > 명세서의 "패키지명" 열은 그대로 두고, 필요하면 "경로" 열(예: `app/rag/retriever`)을 추가하면 됩니다.
 
-## 5. 결정이 필요한 사항 (명세서 검토 중 발견)
 
-| # | 내용 | 제안 |
-|---|---|---|
-| 1 | `upload_report()`가 호출하는 `make_child_chunks()`, `table_loader`가 호출하는 `ocr_page()`, `ask_stream()`이 호출하는 `route()`, `get_parent_sections()`가 명세서에 정의되어 있지 않음 | 각각 `rag/ingestion/splitter/text_splitter.py`, `rag/ingestion/loader/pdf_loader.py`, `ai/llm/llm_client.py`, `infrastructure/dao/report_dao.py`에 추가 |
-| 2 | `on_request()`는 `run_with_tools()`를, `tool_router`는 `run_agent_with_tools()`를 정의 | `run_agent_with_tools()`로 통일 |
-| 3 | `ai/router/tool_router.py`의 `TOOL_MAP`이 요약 · 검증 · 병합 · ECOS 판단(= `application/service` 함수)을 실행해야 해서 의존 방향이 거꾸로 됨 | ① `tool_router.py`를 `application/service/`로 옮기거나 ② `TOOL_MAP`을 `application`에서 만들어 `run_agent_with_tools(tool_map=…)`로 주입 |
-| 4 | 환율 조회가 `ecos_client.get_ecos_exchange_rate()`와 `exchange_client.get_exchange_rate()` 두 곳에 있음 (기본값 상수도 각각) | 하나를 주 경로로 정하고 다른 하나는 fallback |
-| 5 | `report_service.list_reports()`는 `REPORTS` 딕셔너리 + `reports/` 폴더 기준, `search_reports()`는 DB 기준 | DB(`reports` 테이블)로 통일하고 원본 경로는 `data/raw/` |
-| 6 | `register()`는 비밀번호를 그대로 저장 · `user_type='admin'`으로 저장, 서비스 기능 정의서는 `SHA2()` 해시 | 해시 저장 + 일반 가입은 `user`, 관리자 코드 일치 시 `admin` |
-| 7 | `User.role`과 `register(user_type)` 이름이 다름 | `role`로 통일 |
-| 8 | `report_service.py`, `report_dao.py`, `qa_service.py`, `indicator_view.py`를 두 명이 함께 수정 | 함수 단위로 담당을 나누고 PR을 작게 유지 |
-| 9 | `ask_llm()`의 반환 타입 `Usage` 정의 위치 없음 | OpenAI SDK의 `CompletionUsage` 사용 또는 `core/domain/answer.py`에 정의 |
-
-## 6. 의존성 (pyproject 추가 예정 목록 · 참고용)
+## 5. 의존성 (pyproject 추가 예정 목록 · 참고용)
 
 - 런타임: `openai`, `pydantic>=2`, `gradio>=4,<5`, `chromadb`, `pypdf`, `pdfplumber`, `pymysql`, `python-dotenv`, `numpy`, `pandas`, `matplotlib`
 - 기획서 명시: `langchain` (현재 명세서 코드는 OpenAI SDK 직접 호출이라 사용 범위 확인 필요)
 - 개발용(`--group dev`): `pytest`, `reportlab`(샘플 PDF 생성)
 
-## 7. 실행 · 테스트 (구조 확정 후)
+## 6. 실행 · 테스트 (구조 확정 후)
 
 ```bash
 poetry install
