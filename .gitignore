@@ -74,8 +74,16 @@ faiss_index/
 # =========================================
 # Data (원본 문서, 업로드 파일)
 # =========================================
-data/raw/
+data/raw/*
+!data/raw/.gitkeep
 uploads/
+# 런타임 생성물 (폴더만 커밋)
+data/charts/raw/*
+!data/charts/raw/.gitkeep
+data/plots/*
+!data/plots/.gitkeep
+data/ecos/*
+!data/ecos/.gitkeep
 # 샘플 데이터는 data/sample/ 에 두고 커밋
 
 # =========================================
