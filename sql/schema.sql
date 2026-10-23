@@ -1,0 +1,1 @@
+-- DB 스키마 (장유빈) · users / reports / sections / chunks / report_tables / qa_logs / terms / indicators / llm_usage + VIEW v_daily_usage
