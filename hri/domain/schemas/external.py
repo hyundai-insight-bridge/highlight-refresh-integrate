@@ -1,12 +1,13 @@
-"""외부 데이터 스키마 · Indicator, EcosChoice, EcosQuery, TermCard, EcosExchangeRate (엄정현)"""
+"""외부 데이터 스키마 · Indicator, EcosChoice, EcosQuery, TermCard, EcosExchangeRate (엄정현), EximExchangeRate (류현수)"""
 
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
-__all__ = ["Indicator", "EcosChoice", "EcosQuery", "TermCard", "EcosExchangeRate"]
+__all__ = ["Indicator", "EcosChoice", "EcosQuery", "TermCard", "EcosExchangeRate", "EximExchangeRate"]
+
 
 class Indicator(BaseModel):
 	"""[지표정보] 보고서에서 뽑은 지표 1개 (indicators 테이블 1행). LLM용 스키마에서는 report_id를 빼고 저장할 때 코드가 붙인다.
@@ -71,8 +72,24 @@ class TermCard(BaseModel):
 
 
 class EcosExchangeRate(BaseModel):
-	"""[환율 정보] 환율 1건. ECOS(get_ecos_exchange_rate)와 수출입은행(get_exchange_rate)이 같이 쓴다."""
+	"""[환율 정보] 환율 1건. ECOS API를 통해 정보를 가져온다."""
 
 	currency: str = Field(description="통화 종류 (예: USD · JPY(100엔) · EUR)")
 	value: float =Field(description= "해당 통화의 원화 환율금액 (예: 1400.10)")
 	base_date: str = Field(description="기준일 YYYYMMDD")
+
+
+class EximExchangeRate(BaseModel):
+    """[환율 정보] 한국수출입은행 OpenAPI 환율 응답 1건."""
+
+    RESULT: int = Field(description="조회 결과 (1: 성공, 2: DATA 코드 오류, 3: 인증 코드 오류, 4: 일일 제한 횟수 초과)")
+    CUR_UNIT: str | None = Field(default=None, description="통화 코드 (예: USD, JPY(100엔), EUR)")
+    CUR_NM: str | None = Field(default=None, description="국가/통화명")
+    TTB: str | None = Field(default=None, description="전신환(송금) 받으실 때")
+    TTS: str | None = Field(default=None, description="전신환(송금) 보내실 때")
+    DEAL_BAS_R: str | None = Field(default=None, description="매매 기준율")
+    BKPR: str | None = Field(default=None, description="장부가격")
+    YY_EFEE_R: str | None = Field(default=None, description="년환가료율")
+    TEN_DD_EFEE_R: str | None = Field(default=None, description="10일환가료율")
+    KFTC_DEAL_BAS_R: str | None = Field(default=None, description="서울외국환중개 매매기준율")
+    KFTC_BKPR: str | None = Field(default=None, description="서울외국환중개 장부가격")

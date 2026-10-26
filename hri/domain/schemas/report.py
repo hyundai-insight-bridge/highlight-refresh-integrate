@@ -128,7 +128,7 @@ class Report(BaseModel):
 
 	report_id: int | None = Field(default=None, description="AUTO_INCREMENT, insert_report()가 돌려줌. 저장 전에는 None")
 	title: str = Field(min_length=1, max_length=255, description="보고서 제목 (PDF 메타 → 첫 쪽 → 파일명 순으로 찾음)")
-	publisher: str | None = Field(default=None, max_length=100, description="발행기관 못 찾으면 None(화면에는 '확인할 수 없는 발행기관'으로 표시)")
+	publisher: str | None = Field(default=None, max_length=100, description="발행기관. PDF 메타·첫 쪽·파일명에서 찾지 못하면 None(화면에는 '확인할 수 없는 발행기관'으로 표시)")
 	published_date: date | None = Field(default=None, description="발행일. '2026-07-31' 글자도 받음, 못 찾으면 None")
 	page_count: int = Field(default=0, ge=0, description="PDF 전체 쪽 수")
 	chunk_count: int = Field(default=0, ge=0, description="청크 수 (DB 칸 없음, chunks를 집계해서 채움)")
