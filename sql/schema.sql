@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS reports (
     published_date  DATE         NULL     COMMENT '못 찾으면 NULL',
     page_count      INT          NOT NULL DEFAULT 0,
     file_path       VARCHAR(255) NOT NULL,
-    file_hash       CHAR(64)     NOT NULL COMMENT 'SHA-256, 같은 파일 중복 업로드 방지',
+    file_hash       VARCHAR(36)  NOT NULL COMMENT '파일 식별값(uuid), UNIQUE',
     summary_json    JSON         NULL     COMMENT '요약 캐시(ReportSummary)',
     uploaded_by     VARCHAR(50)  NOT NULL,
     created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
