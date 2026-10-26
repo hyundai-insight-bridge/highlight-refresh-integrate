@@ -1,11 +1,12 @@
-"""LLM 호출·비용 · get_chat_model, ask_llm, chat_bot (서동안) / cost_korean_won, get_usd_krw (임세준)"""
-
 """공통 LLM 모듈 (llm.llm_client)."""
 
 from langchain_core.messages.ai import UsageMetadata
 from langchain_openai import ChatOpenAI
 
-MODEL = "gpt-4o-mini"
+from hri.config.settings import load_settings
+
+"""기본 모델은 hri.Settings.llm_model에서 가져온다. 모델을 바꿀 때는 Settings(.env)만 수정한다."""
+MODEL = load_settings().llm_model
 
 
 def get_chat_model(
