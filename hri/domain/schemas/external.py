@@ -1,4 +1,4 @@
-"""외부 데이터 스키마 · Indicator, EcosChoice, EcosQuery, TermCard, ExchangeRate (엄정현)"""
+"""외부 데이터 스키마 · Indicator, EcosChoice, EcosQuery, TermCard, EcosExchangeRate (엄정현)"""
 
 
 from typing import Literal
@@ -6,8 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
-__all__ = ["Indicator", "EcosChoice", "EcosQuery", "TermCard", "ExchangeRate"]
-
+__all__ = ["Indicator", "EcosChoice", "EcosQuery", "TermCard", "EcosExchangeRate"]
 
 class Indicator(BaseModel):
 	"""[지표정보] 보고서에서 뽑은 지표 1개 (indicators 테이블 1행). LLM용 스키마에서는 report_id를 빼고 저장할 때 코드가 붙인다.
