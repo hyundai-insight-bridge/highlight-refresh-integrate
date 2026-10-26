@@ -2,6 +2,13 @@
 
 # 엄정현 validate_pdf() 추가.
 
+import os
+
+import pymupdf
+
+from hri.config.settings import load_settings
+from hri.domain.schemas import ValidationResult
+
 def validate_pdf(file_path: str) -> ValidationResult:
 	"""업로드된 파일이 PDF로 처리할 수 있는지 확인한다.
 
@@ -49,6 +56,8 @@ def validate_pdf(file_path: str) -> ValidationResult:
 
 		# 5) 쪽 수 확인
 		page_count = doc.page_count
+		if page_count < 1:
+			return ValidationResult(ok=False, reason="쪽이 하나도 없는 PDF입니다. 내용이 있는 파일을 올려 주세요")
 		if page_count > max_pages:
 			return ValidationResult(ok=False, reason=f"쪽 수가 {max_pages}쪽을 넘습니다 (현재 {page_count}쪽)")
 
