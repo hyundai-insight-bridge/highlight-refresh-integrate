@@ -1,4 +1,4 @@
-"""설정 스키마 · Settings: .env에서 읽은 앱 설정, 현재는 MySQL·Chroma 연결 항목만 (임세준)"""
+"""설정 스키마 · Settings: .env에서 읽은 앱 설정 (임세준)"""
 from typing import Literal, Optional
 
 from pydantic import BaseModel, SecretStr
