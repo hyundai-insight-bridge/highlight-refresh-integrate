@@ -14,7 +14,7 @@ class Indicator(BaseModel):
         예: '2026년 2분기 GDP 성장률 2.5%' 같은 구체적인 수치 지표를 나타냅니다.
 	"""
 
-	report_id: int | Noen =Field(
+	report_id: int | None =Field(
             default=None,
             description="연결된 보고서의 고유 ID 번호 (저장 전에는 비어있을 수 있음)",
         )
@@ -24,7 +24,7 @@ class Indicator(BaseModel):
         )
 	unit: str = Field(description="%, %p, 억 원, 조 원 등")
 	period: str = Field(description="지표가 나타내는 기준 시점 (예: 2026Q2, 202607, 2025)")
-	source: Literal["text", "table", "chart"] = Field(default="text", description="지표가 나타내는 기준 시점"
+	source: Literal["text", "table", "chart"] = Field(default="text", description="지표가 나타내는 기준 시점")
 	needs_review: bool = Field(
 		default="text",
 		description ="수치가 정확한지 사람 검토가 필요한지 여부"
@@ -71,7 +71,7 @@ class TermCard(BaseModel):
 	source: str = Field(description="원문 정의의 출처 (예: ECOS 통계용어 / 표준국어대사전)")
 
 
-class ExchangeRate(BaseModel):
+class EcosExchangeRate(BaseModel):
 	"""[환율 정보] 환율 1건. ECOS(get_ecos_exchange_rate)와 수출입은행(get_exchange_rate)이 같이 쓴다."""
 
 	currency: str = Field(description="통화 종류 (예: USD · JPY(100엔) · EUR)")
