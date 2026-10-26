@@ -55,7 +55,7 @@ def load_settings() -> Settings:
 		chroma_collection=os.getenv("CHROMA_COLLECTION", "hri_reports"),
 		llm_model=os.getenv("LLM_MODEL", "gpt-4o-mini"),
 		vision_model=os.getenv("VISION_MODEL", ""),
-		model_prices=os.getenv("MODEL_PRICES", ""),
+		model_prices=os.getenv("MODEL_PRICES", '{"gpt-4o-mini": {"input": 0.15, "output": 0.60}}'),
 		ocr_langs=os.getenv("OCR_LANGS", "ko,en"),
 		ocr_min_conf=os.getenv("OCR_MIN_CONF", "0.4"),
 		chart_dpi=os.getenv("CHART_DPI", "200"),

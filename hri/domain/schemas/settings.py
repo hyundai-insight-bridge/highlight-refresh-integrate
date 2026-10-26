@@ -35,8 +35,8 @@ class Settings(BaseModel):
 
 	# 모델·단가
 	llm_model: str = "gpt-4o-mini"
-	vision_model: str = ""
-	model_prices: str = ""
+	vision_model: str = "gpt-4o"
+	model_prices: str = '{"gpt-4o-mini": {"input": 0.15, "output": 0.60}}'
 
 	# OCR·차트
 	ocr_langs: str = "ko,en"
