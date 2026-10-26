@@ -1,6 +1,6 @@
-"""질의응답 스키마 · AnswerResult, SuggestOutput, SearchHit, ContextDoc (서동안)"""
+"""질의응답 스키마 · AnswerResult, SuggestOutput, SearchHit, ContextDoc (서동안)
 
-"""Chunk는 보고서 스키마(3.2.1: Page·Section·Chunk·Table·Report)에서 같은 모듈에 정의한다.
+Chunk는 보고서 스키마(3.2.1: Page·Section·Chunk·Table·Report)에서 같은 모듈에 정의한다.
 이 파일의 클래스는 그 정의와 같은 domain/schemas.py에 함께 둔다.
 """
 
