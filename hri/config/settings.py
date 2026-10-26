@@ -8,7 +8,15 @@ from hri.domain.schemas import Settings
 
 
 def load_settings() -> Settings:
-	""".env를 읽어서 Settings 만들기"""
+	"""
+	.env를 읽어서 Settings 만들기
+
+	1) load_dotenv()로 .env 파일 내용을 환경변수로 등록한다 (os.getenv보다 먼저 해야 함).
+	2) MySQL 필수값(MYSQL_HOST, MYSQL_USER, MYSQL_PASSWORD, MYSQL_DATABASE)이 없으면 ValueError.
+	   Chroma를 서버(http) 모드로 쓸 때는 CHROMA_HOST도 없으면 ValueError.
+	3) MAX_CONTEXT_CHARS가 비어 있으면 None으로 바꾼다.
+	4) os.getenv로 값을 꺼내 Settings를 만들어 반환한다 (기본값은 Settings 스키마와 같음).
+	"""
 	# 1) .env 파일 내용을 환경변수로 등록 (os.getenv보다 먼저!)
 	load_dotenv()
 
