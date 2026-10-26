@@ -8,6 +8,33 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.11,<3.12"
 dependencies = [
+    "langchain (==1.4.0)",
+    "langchain-classic (==1.0.8)",
+    "langchain-community (==0.4.2)",
+    "langchain-core (==1.6.2)",
+    "langchain-mcp-adapters (==0.3.1)",
+    "langchain-openai (==1.6.2)",
+    "langchain-protocol (==0.0.19)",
+    "langchain-text-splitters (==1.1.2)",
+    "langgraph (==1.2.11)",
+    "langgraph-checkpoint (==4.2.0)",
+    "langgraph-prebuilt (==1.1.0)",
+    "langgraph-sdk (==0.4.4)",
+    "gradio (>=6.30.0,<7.0.0)",
+    "chromadb (==1.5.9)",
+    "uuid (>=1.30,<2.0)",
+    "openai (>=3.37.0,<4.0.0)",
+    "pypdf (>=6.21.2,<7.0.0)",
+    "pdfplumber (>=0.11.10,<0.12.0)",
+    "pymupdf (>=2.0,<3.0)",
+    "easyocr (>=1.7.2,<2.0.0)",
+    "pymysql (>=1.2.3,<2.0.0)",
+    "python-dotenv (>=1.2.4,<2.0.0)",
+    "pydantic (>=2.0,<2.13)",
+    "numpy (==2.4.6)",
+    "pandas (>=1.0,<3.0)",
+    "matplotlib (>=3.11.2,<4.0.0)",
+    "reportlab (>=5.1.0,<6.0.0)",
 ]
 
 
