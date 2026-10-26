@@ -34,9 +34,9 @@ class Settings(BaseModel):
 	chroma_collection: str = "hri_reports"
 
 	# 모델·단가
-	llm_model: str = "gpt-4o-mini"
-	vision_model: str = "gpt-4o"
-	model_prices: str = '{"gpt-4o-mini": {"input": 0.15, "output": 0.60}}'
+	llm_model: str = "gpt-5-mini"
+	vision_model: str = "gpt-5-mini"
+	model_prices: str = '{"gpt-5-mini": {"input": 0.25, "output": 2.00}}'
 
 	# OCR·차트
 	ocr_langs: str = "ko,en"

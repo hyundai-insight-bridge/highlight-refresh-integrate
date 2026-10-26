@@ -7,16 +7,8 @@ from dotenv import load_dotenv
 from hri.domain.schemas import Settings
 
 
-# 처음 만든 설정을 담아 두는 곳 (두 번째부터는 .env를 다시 안 읽음)
-saved_settings = {}
-
-
 def load_settings() -> Settings:
 	""".env를 읽어서 Settings 만들기"""
-	# 이미 만든 적 있으면 그대로 돌려줌
-	if "settings" in saved_settings:
-		return saved_settings["settings"]
-
 	# 1) .env 파일 내용을 환경변수로 등록 (os.getenv보다 먼저!)
 	load_dotenv()
 
@@ -53,9 +45,9 @@ def load_settings() -> Settings:
 		chroma_port=os.getenv("CHROMA_PORT", "8000"),
 		chroma_persist_path=os.getenv("CHROMA_PERSIST_PATH", "chroma_db/"),
 		chroma_collection=os.getenv("CHROMA_COLLECTION", "hri_reports"),
-		llm_model=os.getenv("LLM_MODEL", "gpt-4o-mini"),
-		vision_model=os.getenv("VISION_MODEL", ""),
-		model_prices=os.getenv("MODEL_PRICES", '{"gpt-4o-mini": {"input": 0.15, "output": 0.60}}'),
+		llm_model=os.getenv("LLM_MODEL", "gpt-5-mini"),
+		vision_model=os.getenv("VISION_MODEL", "gpt-5-mini"),
+		model_prices=os.getenv("MODEL_PRICES", '{"gpt-5-mini": {"input": 0.25, "output": 2.00}}'),
 		ocr_langs=os.getenv("OCR_LANGS", "ko,en"),
 		ocr_min_conf=os.getenv("OCR_MIN_CONF", "0.4"),
 		chart_dpi=os.getenv("CHART_DPI", "200"),
@@ -66,7 +58,7 @@ def load_settings() -> Settings:
 		chunk_size=os.getenv("CHUNK_SIZE", "500"),
 		chunk_overlap=os.getenv("CHUNK_OVERLAP", "50"),
 		threshold=os.getenv("THRESHOLD", "0.3"),
-		max_context_chars=max_context_chars,
+		max_context_chars=max_context_chars
 	)
 
 	# 5) 키가 잘 들어왔는지 앞 7글자만 출력해서 확인
@@ -74,7 +66,7 @@ def load_settings() -> Settings:
 		"OPENAI_API_KEY": settings.openai_api_key,
 		"ECOS_API_KEY": settings.ecos_api_key,
 		"STDICT_API_KEY": settings.stdict_api_key,
-		"KOREAEXIM_API_KEY": settings.koreaexim_api_key,
+		"KOREAEXIM_API_KEY": settings.koreaexim_api_key
 	}
 	print("===== 설정 확인 =====")
 	for name in keys:
@@ -83,8 +75,5 @@ def load_settings() -> Settings:
 			print(f"{name}: 없음")
 		else:
 			print(f"{name}: {value[:7]}...")
-
-	# 6) 다음에 또 부르면 바로 돌려주게 저장
-	saved_settings["settings"] = settings
 
 	return settings
