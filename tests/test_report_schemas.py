@@ -5,7 +5,7 @@ import pytest
 # ValidationError: Pydantic이 값이 틀렸을 때 내는 오류의 종류
 from pydantic import ValidationError
 
-# 7번 규칙 확인: report.py의 __all__에 넣은 이름은 hri.domain.schemas에서 바로 불러올 수 있어야 한다
+# report.py의 __all__에 넣은 이름은 hri.domain.schemas에서 바로 불러올 수 있어야 한다
 from hri.domain.schemas import (
 	ChartData,
 	ChartImage,
