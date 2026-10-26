@@ -4,7 +4,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field, model_validator
 from pydantic.json_schema import SkipJsonSchema
 
-__all__: list[str] = []
+__all__: list[str] = ["SectionSummary", "ReportSummary", "ThreeLineSummary", "VerifyResult", "MergedReport"]
 
 # 섹션별 요약 - summarize_sections()의 결과
 class SectionSummary(BaseModel):
