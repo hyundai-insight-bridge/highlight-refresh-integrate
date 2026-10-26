@@ -1,4 +1,4 @@
-"""외부 데이터 스키마 · Indicator, EcosChoice, EcosQuery, TermCard, ExchangeRate (엄정현), EximExchangeRate (류현수)"""
+"""외부 데이터 스키마 · Indicator, EcosChoice, EcosQuery, TermCard, EcosExchangeRate (엄정현), EximExchangeRate (류현수)"""
 
 
 from typing import Literal
