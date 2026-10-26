@@ -37,13 +37,6 @@ def load_settings() -> Settings:
 	if max_context_chars == "":
 		max_context_chars = None
 
-	# LangSmith 추적은 두 값이 다 있을 때만 켬
-	langsmith_api_key = os.getenv("LANGSMITH_API_KEY", "")
-	if os.getenv("LANGSMITH_TRACING") == "true" and langsmith_api_key != "":
-		langsmith_tracing = True
-	else:
-		langsmith_tracing = False
-
 	# 4) Settings 만들기
 	settings = Settings(
 		openai_api_key=os.getenv("OPENAI_API_KEY", ""),
@@ -82,7 +75,6 @@ def load_settings() -> Settings:
 		"ECOS_API_KEY": settings.ecos_api_key,
 		"STDICT_API_KEY": settings.stdict_api_key,
 		"KOREAEXIM_API_KEY": settings.koreaexim_api_key,
-		"LANGSMITH_API_KEY": settings.langsmith_api_key
 	}
 	print("===== 설정 확인 =====")
 	for name in keys:
