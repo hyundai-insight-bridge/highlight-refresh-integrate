@@ -68,12 +68,5 @@ def load_settings() -> Settings:
 		"STDICT_API_KEY": settings.stdict_api_key,
 		"KOREAEXIM_API_KEY": settings.koreaexim_api_key
 	}
-	print("===== 설정 확인 =====")
-	for name in keys:
-		value = keys[name]
-		if value == "":
-			print(f"{name}: 없음")
-		else:
-			print(f"{name}: {value[:7]}...")
-
+	
 	return settings
