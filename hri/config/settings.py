@@ -61,12 +61,4 @@ def load_settings() -> Settings:
 		max_context_chars=max_context_chars
 	)
 
-	# 5) 키가 잘 들어왔는지 앞 7글자만 출력해서 확인
-	keys = {
-		"OPENAI_API_KEY": settings.openai_api_key,
-		"ECOS_API_KEY": settings.ecos_api_key,
-		"STDICT_API_KEY": settings.stdict_api_key,
-		"KOREAEXIM_API_KEY": settings.koreaexim_api_key
-	}
-	
 	return settings
