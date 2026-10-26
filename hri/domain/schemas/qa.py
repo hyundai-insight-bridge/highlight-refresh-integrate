@@ -10,6 +10,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from hri.domain.schemas.report import Chunk
 
 class AnswerResult(BaseModel):
     """ask_stream()이 답변 조각을 모두 보낸 뒤 마지막에 넘기는 질문 1건의 결과."""
