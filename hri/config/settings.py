@@ -1,39 +1,90 @@
 """환경 설정 로드 · load_settings (임세준)"""
+
 import os
-from functools import lru_cache
 
 from dotenv import load_dotenv
 
 from hri.domain.schemas import Settings
 
 
-def _require(name: str) -> str:
-	"""필수 환경 변수를 읽는다. 없거나 비어 있으면 어떤 키가 빠졌는지 알려준다."""
-	value = os.getenv(name)
-	if not value:
-		raise RuntimeError(f"{name}이(가) .env에 없습니다. .env.example을 참고해 추가하세요.")
-	return value
+# 처음 만든 설정을 담아 두는 곳 (두 번째부터는 .env를 다시 안 읽음)
+saved_settings = {}
 
 
-@lru_cache(maxsize=1)
 def load_settings() -> Settings:
-	"""
-	.env를 읽어 Settings를 만든다.
+	""".env를 읽어서 Settings 만들기"""
+	# 이미 만든 적 있으면 그대로 돌려줌
+	if "settings" in saved_settings:
+		return saved_settings["settings"]
 
-	처음 한 번만 읽고 캐시한다. 테스트에서 환경 변수를 바꿨다면 load_settings.cache_clear()를 호출한다.
-	현재는 MySQL·Chroma 연결 항목만 읽는다. 다른 항목은 Settings에 필드를 추가한 뒤 여기서 함께 읽는다.
-	"""
+	# 1) .env 파일 내용을 환경변수로 등록 (os.getenv보다 먼저!)
 	load_dotenv()
+
+	# 2) 꼭 있어야 하는 값이 있는지 확인
+	need_names = ["MYSQL_HOST", "MYSQL_USER", "MYSQL_PASSWORD", "MYSQL_DATABASE"]
+	for name in need_names:
+		if not os.getenv(name):
+			raise ValueError(f"{name}이(가) .env에 없습니다. .env.example을 참고하세요.")
+
+	# Chroma 서버에 연결할 때는 CHROMA_HOST도 있어야 함
 	chroma_mode = os.getenv("CHROMA_MODE", "http")
-	return Settings(
-		mysql_host=_require("MYSQL_HOST"),
+	if chroma_mode == "http":
+		if not os.getenv("CHROMA_HOST"):
+			raise ValueError("CHROMA_HOST이(가) .env에 없습니다. .env.example을 참고하세요.")
+
+	# 3) 값이 비어 있을 수 있는 것 처리
+	max_context_chars = os.getenv("MAX_CONTEXT_CHARS")
+	if max_context_chars == "":
+		max_context_chars = None
+
+	# 4) Settings 만들기
+	settings = Settings(
+		openai_api_key=os.getenv("OPENAI_API_KEY", ""),
+		ecos_api_key=os.getenv("ECOS_API_KEY", ""),
+		stdict_api_key=os.getenv("STDICT_API_KEY", ""),
+		koreaexim_api_key=os.getenv("KOREAEXIM_API_KEY", ""),
+		mysql_host=os.getenv("MYSQL_HOST"),
 		mysql_port=os.getenv("MYSQL_PORT", "3306"),
-		mysql_user=_require("MYSQL_USER"),
-		mysql_password=_require("MYSQL_PASSWORD"),
-		mysql_database=_require("MYSQL_DATABASE"),
+		mysql_user=os.getenv("MYSQL_USER"),
+		mysql_password=os.getenv("MYSQL_PASSWORD"),
+		mysql_database=os.getenv("MYSQL_DATABASE"),
 		chroma_mode=chroma_mode,
-		chroma_host=_require("CHROMA_HOST") if chroma_mode == "http" else os.getenv("CHROMA_HOST", "localhost"),
+		chroma_host=os.getenv("CHROMA_HOST", "localhost"),
 		chroma_port=os.getenv("CHROMA_PORT", "8000"),
 		chroma_persist_path=os.getenv("CHROMA_PERSIST_PATH", "chroma_db/"),
 		chroma_collection=os.getenv("CHROMA_COLLECTION", "hri_reports"),
+		llm_model=os.getenv("LLM_MODEL", "gpt-4o-mini"),
+		vision_model=os.getenv("VISION_MODEL", ""),
+		model_prices=os.getenv("MODEL_PRICES", '{"gpt-4o-mini": {"input": 0.15, "output": 0.60}}'),
+		ocr_langs=os.getenv("OCR_LANGS", "ko,en"),
+		ocr_min_conf=os.getenv("OCR_MIN_CONF", "0.4"),
+		chart_dpi=os.getenv("CHART_DPI", "200"),
+		min_chart_pt=os.getenv("MIN_CHART_PT", "120"),
+		graph_recursion_limit=os.getenv("GRAPH_RECURSION_LIMIT", "8"),
+		max_mb=os.getenv("MAX_MB", "30"),
+		max_pages=os.getenv("MAX_PAGES", "150"),
+		chunk_size=os.getenv("CHUNK_SIZE", "500"),
+		chunk_overlap=os.getenv("CHUNK_OVERLAP", "50"),
+		threshold=os.getenv("THRESHOLD", "0.3"),
+		max_context_chars=max_context_chars,
 	)
+
+	# 5) 키가 잘 들어왔는지 앞 7글자만 출력해서 확인
+	keys = {
+		"OPENAI_API_KEY": settings.openai_api_key,
+		"ECOS_API_KEY": settings.ecos_api_key,
+		"STDICT_API_KEY": settings.stdict_api_key,
+		"KOREAEXIM_API_KEY": settings.koreaexim_api_key,
+	}
+	print("===== 설정 확인 =====")
+	for name in keys:
+		value = keys[name]
+		if value == "":
+			print(f"{name}: 없음")
+		else:
+			print(f"{name}: {value[:7]}...")
+
+	# 6) 다음에 또 부르면 바로 돌려주게 저장
+	saved_settings["settings"] = settings
+
+	return settings
