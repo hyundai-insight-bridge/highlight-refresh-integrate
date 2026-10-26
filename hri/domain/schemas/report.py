@@ -4,7 +4,7 @@ DB에 저장하는 모델(Section·Chunk·Table·Report)의 필드 이름은 sql
 	- Section → sections / Chunk → chunks / Table → report_tables / Report → reports
 	- Page·ValidationResult·ChartImage·OcrToken·ChartSeries·ChartData는 저장하지 않고 업로드(ingest_graph) 중에만 쓴다.
 	
-DF 보고서 업로드 검증부터 텍스트/표/차트 추출, 섹션 분할, 청크 생성 및 DB/벡터스토어 저장에 사용되는 핵심 데이터 규격입니다.
+PDF 보고서 업로드 검증부터 텍스트/표/차트 추출, 섹션 분할, 청크 생성 및 DB/벡터스토어 저장에 사용되는 핵심 데이터 규격입니다.
 """
 
 from datetime import date
@@ -128,7 +128,7 @@ class Report(BaseModel):
 
 	report_id: int | None = Field(default=None, description="AUTO_INCREMENT, insert_report()가 돌려줌. 저장 전에는 None")
 	title: str = Field(min_length=1, max_length=255, description="보고서 제목 (PDF 메타 → 첫 쪽 → 파일명 순으로 찾음)")
-	publisher: str = Field(default="None", max_length=100, description="발행기관 (못 찾으면 'None'값)")
+	publisher: str | None = Field(default=None, max_length=100, description="발행기관 못 찾으면 None(화면에는 '확인할 수 없는 발행기관'으로 표시)")
 	published_date: date | None = Field(default=None, description="발행일. '2026-07-31' 글자도 받음, 못 찾으면 None")
 	page_count: int = Field(default=0, ge=0, description="PDF 전체 쪽 수")
 	chunk_count: int = Field(default=0, ge=0, description="청크 수 (DB 칸 없음, chunks를 집계해서 채움)")
@@ -144,7 +144,7 @@ class Report(BaseModel):
 
 class ValidationResult(BaseModel):
 	"""[PDF 검증 결과] 업로드된 PDF 파일의 적합성 검사 결과. 예외를 던지지 않고 이 값을 돌려준다.
-    	확인 항목: 확장자(.pdf) · 용량(MAX_MB=30) · 쪽 수(MAX_PAGES=150) · pypdf로 열리는지 · 암호화 여부
+    확인 항목: 확장자(.pdf) · 용량(MAX_MB=30) · 쪽 수(MAX_PAGES=150) · pypdf로 열리는지 · 암호화 여부
 	실패하면 validate 노드가 reason을 state['error']에 기록하고, on_upload()가 화면에 보여 준다.
 	글자가 없는 스캔본은 여기서 막지 않는다 (load_pdf()가 Page.is_scanned로 표시)."""
 
@@ -164,7 +164,7 @@ class ChartImage(BaseModel):
 
 	page: int = Field(ge=1, description="차트가 있는 쪽, 1부터 (fitz 인덱스+1)")
 	caption: str | None = Field(default=None, description="'[그림 n]'·'<그림 n>'·'[차트 n]' 캡션, 못 찾으면 None")
-	bbox: list[float] = Field(description="쪽 위 영역 [x0, y0, x1, y1] (pt)")
+	bbox: tuple[float, float, float, float] = Field(description="쪽 위 영역 [x0, y0, x1, y1] (pt)")
 	image_path: str = Field(description="data/charts/raw/의 PNG 경로 (uuid 파일명)")
 
 
@@ -174,7 +174,6 @@ class OcrToken(BaseModel):
 	목록은 위→아래, 왼→오른쪽 순으로 정렬한다."""
 
 	text: str = Field(description="읽은 글자. 숫자는 쉼표·공백·전각 기호를 정리한 값")
-	bbox: list[float] = Field(description="이미지 위 영역 [x0, y0, x1, y1] (px). EasyOCR 네 꼭짓점에서 최소·최대로 변환")
 	bbox: tuple[float, float, float, float] = Field(
 		description="이미지 위 영역 (x0, y0, x1, y1) px. EasyOCR 네 꼭짓점에서 x·y의 최소·최대로 변환",
 	)
@@ -184,7 +183,7 @@ class OcrToken(BaseModel):
 
 class ChartSeries(BaseModel):
 	"""차트의 계열 하나 (범례 한 줄).
-	alues는 ChartData.x_labels와 같은 순서·같은 개수여야 한다 (validate_chart()가 확인)
+	values는 ChartData.x_labels와 같은 순서·같은 개수여야 한다 (validate_chart()가 확인)
 	"""
 
 	name: str = Field(description="계열 이름 (범례에 있는 이름만)")
