@@ -18,7 +18,6 @@ class AnswerResult(BaseModel):
     answer: str
     sources: list[dict] = Field(default_factory=list)
     suggestions: list[str] = Field(default_factory=list)
-    terms: list[str] = Field(default_factory=list)
     has_source: bool = False
     route: Literal["chat", "rewrite", "error"]
     tokens: int = 0
@@ -33,11 +32,6 @@ class SuggestOutput(BaseModel):
         min_length=3,
         max_length=3,
         description="질문과 답변에 이어서 물어볼 만한 후속 질문 정확히 3개",
-    )
-    terms: list[str] = Field(
-        default_factory=list,
-        max_length=3,
-        description="답변에 나온 어려운 경제 용어 최대 3개 (없으면 빈 리스트)",
     )
 
 
