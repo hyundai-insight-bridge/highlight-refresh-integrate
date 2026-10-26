@@ -33,7 +33,7 @@ class ReportSummary(BaseModel):
     model: str = "gpt-4o-mini"
 
 # 3줄 요약 - summarize_three_lines()의 결과
-class ThreeLinesSummary(BaseModel):
+class ThreeLineSummary(BaseModel):
     reasoning: str = Field(description="(내부용) 핵심 주장 -> 근거 수치 -> 시사점 순서로 정리한 생각 과정. 화면에 표시하지는 않음")
     lines: list[str] = Field(description="최종 3줄. 1줄: 핵심 주장, 2줄: 근거 수치, 3줄: 시사점. 각 줄 60자 이내")
 
