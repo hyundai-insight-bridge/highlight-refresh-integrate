@@ -18,8 +18,6 @@ import types
 
 import pymupdf
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage
-from langgraph.errors import GraphRecursionError
 from langgraph.graph.state import CompiledStateGraph
 
 from langgraph.checkpoint.memory import InMemorySaver
@@ -210,16 +208,15 @@ def test_agent_edges():
 # ─────────────────────────────────────────────────────────────
 
 # validate 노드가 진짜 validate_pdf()를 부르도록 준비한다 (네트워크·DB·.env 없이).
-#   - document_service는 cost_korean_won(hri.util.metrics)·insert_usage(hri.dao.usage_dao)도 import하므로
-#     두 모듈은 호출 기록 없는 가짜로 바꿔 끼운다 (test_upload_report와 같은 방식, 업로드 그래프 검증에는 쓰지 않음)
+#   - document_service는 cost_korean_won(hri.llm.llm_client)·insert_usage(hri.dao.usage_dao)도 import하므로
+#     호출 기록 없는 가짜로 바꿔 끼운다 (업로드 그래프 검증에는 쓰지 않음)
+#     hri.llm.llm_client는 fake_llm fixture(autouse)가 이미 가짜 모듈로 바꿔 두었으므로 cost_korean_won만 붙인다
 #   - load_settings()는 .env의 MySQL 값이 없으면 오류이므로 가짜 Settings(MAX_MB=30, MAX_PAGES=150 기본값)로 바꾼다
 @pytest.fixture
-def document_service(monkeypatch):
-	metrics = types.ModuleType("hri.util.metrics")
-	metrics.cost_korean_won = lambda *a, **k: 0.0
+def document_service(monkeypatch, fake_llm):
+	monkeypatch.setattr(sys.modules["hri.llm.llm_client"], "cost_korean_won", lambda *a, **k: 0.0, raising=False)
 	usage_dao = types.ModuleType("hri.dao.usage_dao")
 	usage_dao.insert_usage = lambda *a, **k: None
-	monkeypatch.setitem(sys.modules, "hri.util.metrics", metrics)
 	monkeypatch.setitem(sys.modules, "hri.dao.usage_dao", usage_dao)
 	monkeypatch.delitem(sys.modules, "hri.service.document_service", raising=False)
 
@@ -447,21 +444,8 @@ def test_sort_section_summaries():
 	assert [s.title for s in sort_section_summaries(items)] == ["A", "C", "없음"]
 
 
-# [확인 16] 에이전트: 마지막 메시지에 도구 호출이 없으면 agent 한 번으로 끝
-def test_agent_ends_without_tool_calls():
-	nodes = run_nodes(registry.get_agent_graph(), {"messages": [HumanMessage("요약해줘")], "report_ids": [1]})
-	assert nodes == ["agent"]
-
-
-# [확인 17] 에이전트: 도구 호출이 있으면 tools ↔ agent를 반복하고, recursion_limit을 넘으면 GraphRecursionError
-#           (가짜 agent 노드는 메시지를 바꾸지 않아 도구 호출이 계속 남으므로 끝나지 않는다 → 한도에서 멈추는지 확인)
-def test_agent_loops_until_recursion_limit():
-	call = AIMessage(content="", tool_calls=[{"name": "summarize_reports", "args": {}, "id": "call_1"}])
-	with pytest.raises(GraphRecursionError):
-		registry.get_agent_graph().invoke(
-			{"messages": [HumanMessage("요약해줘"), call], "report_ids": [1]},
-			config={"recursion_limit": 8},
-		)
+# [확인 16·17] 에이전트 실행(도구 호출 없음·recursion_limit) 테스트는 3.8.7에서 tests/test_agent_graph.py로 옮겼다
+#               (agent_node가 진짜 LLM 호출 구조가 되어 FakeToolChatModel로 확인)
 
 
 # ─────────────────────────────────────────────────────────────
