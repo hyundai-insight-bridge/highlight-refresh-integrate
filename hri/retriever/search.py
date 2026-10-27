@@ -7,7 +7,9 @@ from hri.domain.schemas.qa import SearchHit
 from hri.domain.schemas.report import Chunk
 from hri.llm.llm_client import get_chat_model
 from hri.vector_store.chroma_store import get_collection
-
+from hri.vector_store.embedding import similarity
+import re
+from hri.dao.db import get_connection
 
 # =====================================================================
 # [장유빈] 질문 확장 · expand_queries (WBS 3.3.6, 이슈 #59)
@@ -109,3 +111,143 @@ def safe_search(query_vec: list[float], k: int = 4, report_ids: list[int] | None
 	"""
 	threshold = load_settings().threshold
 	return [hit for hit in vector_search(query_vec, k, report_ids) if hit.score >= threshold]
+
+# =====================================================================
+# [장유빈] 다양한 근거 선택 · mmr_select (WBS 3.3.13, 이슈 #126)
+# 질문과 관련 있으면서 이미 고른 근거와는 겹치지 않는 근거를 고른다 (MMR)
+# =====================================================================
+def mmr_select(
+	query_vec: list[float],
+	candidates: list[SearchHit],
+	k: int,
+	lambda_mult: float = 0.5,
+) -> list[SearchHit]:
+	"""후보 중 질문과 관련 있으면서 서로 겹치지 않는 근거 k개를 고른다 (MMR).
+
+	점수 = lambda_mult × 질문과의 유사도 − (1 − lambda_mult) × 이미 고른 근거와의 최대 유사도.
+	첫 번째는 질문과 가장 비슷한 후보이고, 이후 점수가 가장 높은 후보를 하나씩 더한다.
+	lambda_mult가 1이면 관련도만, 0에 가까울수록 다양성을 더 본다.
+	후보가 없거나 k가 0 이하면 빈 리스트를 돌려주고, 후보가 k보다 적으면 모두 돌려준다.
+	"""
+	# 고를 게 없거나 0개를 고르라는 요청이면 바로 빈 리스트를 돌려준다
+	if k <= 0 or not candidates:
+		return []
+
+	# 후보마다 "질문과 얼마나 비슷한지"를 미리 한 번만 계산해 둔다 (반복 계산 방지)
+	relevance = [similarity(query_vec, hit.embedding) for hit in candidates]
+
+	# remaining: 아직 안 고른 후보의 번호(인덱스), selected: 이미 고른 후보의 번호
+	remaining = list(range(len(candidates)))
+	selected = []
+
+	# k개를 다 고르거나 후보가 바닥날 때까지 한 개씩 뽑는다
+	while remaining and len(selected) < k:
+		best_index = None  # 이번 차례에서 가장 점수가 높은 후보의 번호
+		best_score = None  # 그 후보의 점수
+
+		# 남은 후보를 하나씩 보면서 점수를 계산한다
+		for i in remaining:
+			# 이미 고른 것들 중 이 후보와 가장 닮은 것의 유사도(겹치는 정도).
+			# 아직 고른 게 없으면(첫 번째 차례) 겹침이 없으니 0으로 본다
+			redundancy = max(
+				(similarity(candidates[i].embedding, candidates[j].embedding) for j in selected),
+				default=0.0,
+			)
+			# 관련도는 올리고(+), 겹침은 깎는다(−). lambda_mult가 두 쪽의 비중을 정한다
+			score = lambda_mult * relevance[i] - (1 - lambda_mult) * redundancy
+
+			# 지금까지 본 후보 중 점수가 가장 높으면 기록해 둔다
+			if best_score is None or score > best_score:
+				best_index = i
+				best_score = score
+
+		# 점수가 가장 높은 후보를 "고른 것"으로 옮기고, 남은 후보에서 뺀다
+		selected.append(best_index)
+		remaining.remove(best_index)
+
+	# 고른 순서대로(= 중요한 순서대로) SearchHit을 돌려준다
+	return [candidates[i] for i in selected]
+
+# =====================================================================
+# [김희진] 키워드 검색 · extract_keywords, keyword_find (WBS 3.3.2)
+# 지표명·기관명·정책명처럼 정확한 문자열을 MySQL LIKE로 찾는다
+# =====================================================================
+# 단어 조각: 영문(GDP, CPI) / 숫자+단위(2026년, 2.5%) / 한글
+TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9&\-]*|\d[\d,.]*[%년월분기억조원]*|[가-힣]+")
+MIN_LEN = 2 # 이보다 짧은 단어는 키워드로 쓰지 않음
+
+# 단어 끝의 조사, 어미 (긴 것부터 확인)
+SUFFIXS = ("에서는", "에서의", "으로의", "이라는", "입니까", "인가요", "에서", "에게", "으로",
+	"까지", "부터", "보다", "에는", "에도", "이나", "라는", "과의", "와의", "인지", "이란",
+	"은", "는", "이", "가", "을", "를", "의", "에", "도", "로", "와", "과", "란",)
+
+# 끝이 이, 가, 은 등이지만 조사가 아닌 경제 용어 (잘라내면 안됨)
+KEEP_ENDINGS = ("물가", "평가", "단가", "원가", "시가", "지가", "대가", "한국은행", "중앙은행")
+
+# 질문에 자주 나오지만 검색에 도움이 안 되는 일반 표현
+STOPWORDS = frozenset({
+	"무엇", "뭐", "어떤", "어떻게", "얼마", "언제", "왜", "어디", "누가", "알려줘", "알려주세요",
+	"설명", "설명해줘", "설명해주세요", "대해", "대한", "관련", "내용", "보고서", "자료", "이번",
+	"최근", "정도", "경우", "무슨", "있나요", "있는지", "인가요", "입니까", "해줘", "주세요",
+	"그거", "이거", "저거", "그것", "이것", "the", "what", "how", "is", "are",
+})
+
+def strip_suffix(token: str) -> str:
+	"""한글 단어 끝의 조사·어미를 뗀다. 떼고 나서 2글자 미만이 되거나 경제 용어로 끝나면 그대로 둔다."""
+	if not re.fullmatch(r"[가-힣]+", token) or token.endswith(KEEP_ENDINGS):
+		return token
+
+	for suffix in SUFFIXS:
+		if token.endswith(suffix) and len(token) - len(suffix) >= MIN_LEN:
+			return token[:-len(suffix)]
+	
+	return token
+
+def extract_keywords(question: str) -> list[str]:
+	"""질문에서 정확한 문자열 검색(LIKE)에 쓸 핵심 키워드를 뽑는다.
+	지표명·기관명·정책명 같은 단어를 골라, 끝의 조사를 떼고 불용어·한 글자 단어를 뺀 뒤
+	중복을 제거해 질문에 나온 순서대로 돌려준다. 키워드가 없으면 []를 돌려준다.
+	예) "2026년 GDP 성장률은 얼마인가요?" → ["2026년", "GDP", "성장률"]
+	"""
+	keywords: list[str] = []
+	for token in TOKEN_RE.findall(question or ""):
+		word = strip_suffix(token)
+		if len(word) < MIN_LEN or word.lower() in STOPWORDS or word in keywords:
+			continue
+		keywords.append(word)
+	
+	return keywords
+
+def escape_like(keyword: str) -> str:
+	"""LIKE 패턴에서 특수 의미를 갖는 % _ 와 이스케이프 문자(!)를 일반 글자로 바꾼다."""
+	return keyword.replace("!", "!!").replace("%", "!%").replace("_", "!_")
+
+def keyword_find(keywords: list[str], report_ids: list[int]|None=None) -> list[Chunk]:
+	"""keywords가 들어 있는 청크를 MySQL chunks.text에서 LIKE '%키워드%'로 찾는다.
+	표·차트 청크는 캡션+요약(text)이 대상이다. report_ids가 있으면 그 보고서로 범위를 제한하고,
+	None이거나 빈 리스트면 전체에서 찾는다. 같은 (report_id, chunk_no)는 한 번만 나오며,
+	매칭된 키워드 수가 많은 청크가 앞에 온다(hybrid_search의 RRF 순위에 사용). 키워드가 없으면 [].
+	"""
+	if not keywords:
+		return []
+
+	patterns = [f"%{escape_like(keyword)}%" for keyword in keywords]
+	like = "(text LIKE %s ESCAPE '!')"
+	match_count = " + ".join([like]*len(patterns))
+	any_match = " OR ".join([like]*len(patterns))
+	sql = ("SELECT report_id, chunk_no, section_no, page, chunk_type, category, text, doc_id, "
+	f"({match_count}) AS match_count"
+	f"FROM chunks WHERE ({any_match})")
+	params: list = [*patterns, *patterns]
+
+	if report_ids:
+		sql += f" AND report_id IN ({', '.join(['%s']*len(report_ids))})"
+		params.extend(report_ids)
+	sql += " ORDER BY match_count DESC, report_id, chunk_no"
+
+	with get_connection() as conn:
+		with conn.cursor() as cur:
+			cur.execute(sql, params)
+			rows = cur.fetchall()
+
+	return [Chunk(**{key: row[key] for key in row if key != "match_count"}) for row in rows]
