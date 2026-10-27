@@ -35,6 +35,7 @@ def select_reports(keyword: str) -> list[Report]:
 	return [Report(**row) for row in rows]
 
 # insert_report, insert_sections, insert_chunks (김희진)
+DEFAULT_PUBLISHER = "현대경제연구원"
 def insert_report(conn: Connection, report: Report) -> int:
 	"""
 	reports 테이블에 보고서 1건을 INSERT하고 새로 생긴 report_id를 돌려준다.
@@ -48,7 +49,7 @@ def insert_report(conn: Connection, report: Report) -> int:
 	)
 	params = (
 		report.title,
-		report.publisher,
+		report.publisher or DEFAULT_PUBLISHER,
 		report.published_date,
 		report.page_count,
 		report.file_path,
@@ -78,7 +79,7 @@ def insert_chunks(conn: Connection, report_id: int, chunks: list[Chunk]) -> int:
 	"""
 	chunks 테이블에 청크를 executemany()로 한 번에 INSERT하고 넣은 개수를 돌려준다.
 	insert_sections()(section_no FK)와 insert_tables()(doc_id FK) 뒤에 호출해야 한다.
-	split 단계의 CHunk.report_id는 None이므로 인자로 받은 report_id를 쓴다.
+	split 단계의 Chunk.report_id는 None이므로 인자로 받은 report_id를 쓴다.
 	텍스트 청크는 doc_id가 None, 표, 차트 청크는 doc_id가 있어야 한다(DB CHECK ch_chunks_doc_id). 빈 목록이면 0.
 	"""
 	if not chunks:
@@ -154,7 +155,7 @@ def update_summary_json(report_id: int, summary: ReportSummary) -> int:
 def _placeholders(count: int, width: int = 1) -> str:
 	"""
 	IN 절용 자리표시자. (3) -> '%s, %s, %s' / (2, 2) -> '(%s, %s), (%s, %s)'"""
-	one = "%s" if width == 1 else "(" + ", ".join(["%s" * width]) + ")"
+	one = "%s" if width == 1 else "(" + ", ".join(["%s"] * width) + ")"
 	return ", ".join([one] * count)
 
 def get_context_docs(chunks: list[Chunk]) -> list[ContextDoc]:
@@ -185,7 +186,7 @@ def get_context_docs(chunks: list[Chunk]) -> list[ContextDoc]:
 			if section_keys:
 				params = [value for key in section_keys for value in key]
 				cur.execute(
-					"SELECT report_id, section_no, title, start_page, end_page, text FROM sections" \
+					"SELECT report_id, section_no, title, start_page, end_page, text FROM sections " \
 					f"WHERE (report_id, section_no) IN ({_placeholders(len(section_keys), 2)})",
 					params,
 				)
