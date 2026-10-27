@@ -41,7 +41,7 @@ def expand_queries(question: str) -> list[str]:
 	"""
 	if not question.strip():
 		return []
-	llm = get_chat_model(temperature=0.5).with_structured_output(_ExpandedQueries)
+	llm = get_chat_model(temperature=0,  max_tokens=2000).with_structured_output(_ExpandedQueries)
 	result = llm.invoke([
 		("system", _EXPAND_SYSTEM_PROMPT),
 		("user", f"### 질문\n{question.strip()}"),
