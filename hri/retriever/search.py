@@ -7,6 +7,7 @@ from hri.domain.schemas.qa import SearchHit
 from hri.domain.schemas.report import Chunk
 from hri.llm.llm_client import get_chat_model
 from hri.vector_store.chroma_store import get_collection
+from hri.vector_store.embedding import similarity
 import re
 from hri.dao.db import get_connection
 
@@ -110,6 +111,62 @@ def safe_search(query_vec: list[float], k: int = 4, report_ids: list[int] | None
 	"""
 	threshold = load_settings().threshold
 	return [hit for hit in vector_search(query_vec, k, report_ids) if hit.score >= threshold]
+
+# =====================================================================
+# [장유빈] 다양한 근거 선택 · mmr_select (WBS 3.3.13, 이슈 #126)
+# 질문과 관련 있으면서 이미 고른 근거와는 겹치지 않는 근거를 고른다 (MMR)
+# =====================================================================
+def mmr_select(
+	query_vec: list[float],
+	candidates: list[SearchHit],
+	k: int,
+	lambda_mult: float = 0.5,
+) -> list[SearchHit]:
+	"""후보 중 질문과 관련 있으면서 서로 겹치지 않는 근거 k개를 고른다 (MMR).
+
+	점수 = lambda_mult × 질문과의 유사도 − (1 − lambda_mult) × 이미 고른 근거와의 최대 유사도.
+	첫 번째는 질문과 가장 비슷한 후보이고, 이후 점수가 가장 높은 후보를 하나씩 더한다.
+	lambda_mult가 1이면 관련도만, 0에 가까울수록 다양성을 더 본다.
+	후보가 없거나 k가 0 이하면 빈 리스트를 돌려주고, 후보가 k보다 적으면 모두 돌려준다.
+	"""
+	# 고를 게 없거나 0개를 고르라는 요청이면 바로 빈 리스트를 돌려준다
+	if k <= 0 or not candidates:
+		return []
+
+	# 후보마다 "질문과 얼마나 비슷한지"를 미리 한 번만 계산해 둔다 (반복 계산 방지)
+	relevance = [similarity(query_vec, hit.embedding) for hit in candidates]
+
+	# remaining: 아직 안 고른 후보의 번호(인덱스), selected: 이미 고른 후보의 번호
+	remaining = list(range(len(candidates)))
+	selected = []
+
+	# k개를 다 고르거나 후보가 바닥날 때까지 한 개씩 뽑는다
+	while remaining and len(selected) < k:
+		best_index = None  # 이번 차례에서 가장 점수가 높은 후보의 번호
+		best_score = None  # 그 후보의 점수
+
+		# 남은 후보를 하나씩 보면서 점수를 계산한다
+		for i in remaining:
+			# 이미 고른 것들 중 이 후보와 가장 닮은 것의 유사도(겹치는 정도).
+			# 아직 고른 게 없으면(첫 번째 차례) 겹침이 없으니 0으로 본다
+			redundancy = max(
+				(similarity(candidates[i].embedding, candidates[j].embedding) for j in selected),
+				default=0.0,
+			)
+			# 관련도는 올리고(+), 겹침은 깎는다(−). lambda_mult가 두 쪽의 비중을 정한다
+			score = lambda_mult * relevance[i] - (1 - lambda_mult) * redundancy
+
+			# 지금까지 본 후보 중 점수가 가장 높으면 기록해 둔다
+			if best_score is None or score > best_score:
+				best_index = i
+				best_score = score
+
+		# 점수가 가장 높은 후보를 "고른 것"으로 옮기고, 남은 후보에서 뺀다
+		selected.append(best_index)
+		remaining.remove(best_index)
+
+	# 고른 순서대로(= 중요한 순서대로) SearchHit을 돌려준다
+	return [candidates[i] for i in selected]
 
 # =====================================================================
 # [김희진] 키워드 검색 · extract_keywords, keyword_find (WBS 3.3.2)
