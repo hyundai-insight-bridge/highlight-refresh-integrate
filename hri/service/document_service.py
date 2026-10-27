@@ -69,7 +69,7 @@ import logging
 from collections.abc import Iterator
 from langchain_core.callbacks import UsageMetadataCallbackHandler
 from hri.graph.registry import get_ingest_graph
-from hri.util.metrics import cost_korean_won
+from hri.llm.llm_client import cost_korean_won
 from hri.dao.usage_dao import insert_usage
 
 logger = logging.getLogger(__name__)
