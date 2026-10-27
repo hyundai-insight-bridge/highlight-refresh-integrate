@@ -56,7 +56,7 @@ def insert_report(conn: Connection, report: Report) -> int:
 		cur.execute(sql, params)
 		return cur.lastrowid
 
-def insert_section(conn: Connection, report_id: int, sections: list[Section]) -> int:
+def insert_sections(conn: Connection, report_id: int, sections: list[Section]) -> int:
 	"""
 	sections 테이블에 부모 섹션을 executemany()로 한 번에 INSERT하고 넣은 개수를 돌려준다.
 	split 단계의 Section.report_id는 None이므로 인자로 받은 report_id를 쓴다.
