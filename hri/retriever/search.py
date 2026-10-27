@@ -7,7 +7,7 @@ from hri.domain.schemas.qa import SearchHit
 from hri.domain.schemas.report import Chunk
 from hri.llm.llm_client import get_chat_model
 from hri.vector_store.chroma_store import get_collection
-from hri.vector_store.embedding import similarity
+from hri.vector_store.embedding import embed_texts, similarity
 import re
 from hri.dao.db import get_connection
 
@@ -169,6 +169,64 @@ def mmr_select(
 	return [candidates[i] for i in selected]
 
 # =====================================================================
+# [장유빈] 하이브리드 검색 · hybrid_search
+# 키워드 검색과 의미 검색(질문 확장·MMR)을 RRF로 합쳐 상위 k개 청크를 고른다
+# =====================================================================
+RRF_K = 60  # RRF 점수 = 1 / (RRF_K + 순위)
+MMR_FETCH_K = 20  # MMR을 쓸 때 먼저 가져오는 후보 수
+
+
+def hybrid_search(
+	question: str,
+	k: int = 4,
+	report_ids: list[int] | None = None,
+	use_mmr: bool = False,
+) -> list[Chunk]:
+	"""키워드 검색과 의미 검색을 RRF로 합쳐 질문에 맞는 청크 k개를 돌려준다.
+
+	원 질문과 expand_queries()의 확장 질문을 한 번에 임베딩해 질문마다 의미 검색을 하고,
+	use_mmr가 True면 후보 20개를 받아 mmr_select()로 k개로 줄인다. 의미 검색 결과가
+	전부 0건이면 키워드 결과가 있어도 빈 리스트(근거 없음)를 돌려준다.
+	병합은 (report_id, chunk_no)가 같은 청크를 하나로 보고 1/(60+순위)를 더한 점수로 한다.
+	"""
+	# 빈 질문은 임베딩 API가 거부하므로 검색하지 않는다
+	if not question.strip():
+		return []
+
+	# 1) 키워드 검색: 질문에서 키워드를 뽑아 MySQL에서 찾는다
+	keyword_chunks = keyword_find(extract_keywords(question), report_ids)
+
+	# 2) 원 질문 + 확장 질문을 한 번에 임베딩한다 (API 호출 1번)
+	queries = [question, *expand_queries(question)]
+	query_vecs = embed_texts(queries)
+
+	# 3) 질문마다 의미 검색을 한다. MMR이면 후보를 넉넉히 받아 k개로 줄인다
+	fetch_k = MMR_FETCH_K if use_mmr else k
+	semantic_lists = []
+	for query_vec in query_vecs:
+		hits = safe_search(query_vec, fetch_k, report_ids)
+		if use_mmr:
+			hits = mmr_select(query_vec, hits, k)
+		semantic_lists.append([hit.chunk for hit in hits])
+
+	# 4) 의미 검색 결과가 전부 없으면 보고서 밖 질문으로 보고 근거 없음 처리한다
+	if not any(semantic_lists):
+		return []
+
+	# 5) RRF 병합: 키워드 순위 목록과 질문별 의미 검색 순위 목록을 점수로 합친다
+	scores = {}  # (report_id, chunk_no) → RRF 점수
+	chunks = {}  # (report_id, chunk_no) → Chunk
+	for ranked in [keyword_chunks, *semantic_lists]:
+		for rank, chunk in enumerate(ranked, start=1):
+			key = (chunk.report_id, chunk.chunk_no)
+			chunks.setdefault(key, chunk)
+			scores[key] = scores.get(key, 0.0) + 1 / (RRF_K + rank)
+
+	# 점수가 높은 순으로 상위 k개를 돌려준다 (점수가 같으면 먼저 나온 순서)
+	best_keys = sorted(scores, key=scores.get, reverse=True)[:k]
+	return [chunks[key] for key in best_keys]
+
+# =====================================================================
 # [김희진] 키워드 검색 · extract_keywords, keyword_find (WBS 3.3.2)
 # 지표명·기관명·정책명처럼 정확한 문자열을 MySQL LIKE로 찾는다
 # =====================================================================
@@ -237,7 +295,7 @@ def keyword_find(keywords: list[str], report_ids: list[int]|None=None) -> list[C
 	any_match = " OR ".join([like]*len(patterns))
 	sql = ("SELECT report_id, chunk_no, section_no, page, chunk_type, category, text, doc_id, "
 	f"({match_count}) AS match_count"
-	f"FROM chunks WHERE ({any_match})")
+	f" FROM chunks WHERE ({any_match})")
 	params: list = [*patterns, *patterns]
 
 	if report_ids:
