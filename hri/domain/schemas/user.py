@@ -1,6 +1,5 @@
-"""회원·기록 스키마 · User, QALog, LlmUsage (임세준)"""
+"""회원·기록 스키마 · User, QALog, LlmUsage (임세준)
 
-"""
 회원 정보, 질문 기록, LLM 사용량 기록을 담는 Pydantic 모델 모음.
 - User: 로그인한 회원 정보 (user_service, user_view에서 사용)
 - QALog: 질문 한 번의 기록 (질문 기록 저장·조회, 내 기록 화면, 관리자 대시보드에서 사용)
