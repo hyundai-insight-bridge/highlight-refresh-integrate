@@ -28,40 +28,40 @@ class Indicator(BaseModel):
 	# 사람 확인 필요 여부: 차트에서 읽은 값처럼 정확하지 않을 수 있으면 True
 	needs_review: bool = Field(default=False, description="수치가 정확한지 사람이 확인해야 하면 true (예: 차트에서 눈으로 읽은 값)")
 
-	# 개발자 메모: name은 str로 둔다. domain이 api.ecos_finder를 import하면 순환 import가 생기기 때문이다.
-	# 후보(INDICATOR_NAMES)에 있는 이름인지는 find_usable_data()가 코드로 검사한다.
-	class EcosChoice(BaseModel):
-		"""보고서 수치와 비교하려고 한국은행(ECOS)에서 조회할 지표를, 주어진 후보 목록에서 하나 고른 결과."""
-	
-		# 고른 지표 이름: 후보 목록에 있는 이름을 글자 그대로 옮겨 적어야 코드가 통계 코드를 찾을 수 있다
-		name: str = Field(description="후보 목록에 있는 지표 이름 하나를 글자 그대로 (예: 경제성장률(분기, 전기비))")
-		# 고른 이유: 화면·기록에 보여 줄 짧은 설명
-		reason: str = Field(description="이 지표를 고른 이유 한 문장")
+# 개발자 메모: name은 str로 둔다. domain이 api.ecos_finder를 import하면 순환 import가 생기기 때문이다.
+# 후보(INDICATOR_NAMES)에 있는 이름인지는 find_usable_data()가 코드로 검사한다.
+class EcosChoice(BaseModel):
+	"""보고서 수치와 비교하려고 한국은행(ECOS)에서 조회할 지표를, 주어진 후보 목록에서 하나 고른 결과."""
+
+	# 고른 지표 이름: 후보 목록에 있는 이름을 글자 그대로 옮겨 적어야 코드가 통계 코드를 찾을 수 있다
+	name: str = Field(description="후보 목록에 있는 지표 이름 하나를 글자 그대로 (예: 경제성장률(분기, 전기비))")
+	# 고른 이유: 화면·기록에 보여 줄 짧은 설명
+	reason: str = Field(description="이 지표를 고른 이유 한 문장")
 
 
-	# 개발자 메모: LLM이 아니라 코드가 채운다. 코드는 INDICATOR_CODES, 기간은 Indicator.period에서 가져온다.
-	class EcosQuery(BaseModel):
-		"""한국은행(ECOS) OpenAPI StatisticSearch를 호출할 때 쓰는 조회 조건."""
-	
-		# 통계표 코드 (예: 200Y102)
-		stat_code: str = Field(description="ECOS 통계표 코드 (예: 200Y102)")
-		# 주기: 연·분기·월·일 네 가지만 받는다
-		cycle: Literal["A", "Q", "M", "D"] = Field(description="A(연) · Q(분기) · M(월) · D(일)")
-		# 첫 번째 항목코드 (예: 국내총생산 10111)
-		item_code: str = Field(description="통계표 안의 첫 번째 항목코드 (예: 10111)")
-		# 두 번째 항목코드: 실업률처럼 항목이 두 단계인 통계표에만 쓴다
-		item_code2: str | None = Field(
-			# 기본값은 None(값 없음)
-			default=None,
-			# 비워 두면 원계열·계절조정처럼 하위 항목이 모두 함께 조회된다
-			description="두 번째 항목코드 (예: 실업률 원계열 I28A). None이면 하위 항목이 모두 조회된다",
-		)
-		# 조회 시작 시점: cycle과 같은 형식이어야 ECOS가 값을 돌려준다
-		start: str = Field(description="조회 시작 시점. cycle 형식과 같아야 함 (A: 2025, Q: 2026Q1, M: 202607, D: 20261023)")
-		# 조회 끝 시점: start와 같은 형식
-		end: str = Field(description="조회 끝 시점. start와 같은 형식")
-		# 조회 이유: EcosChoice.reason을 그대로 옮긴다
-		reason: str = Field(default="", description="이 데이터를 조회하는 이유")
+# 개발자 메모: LLM이 아니라 코드가 채운다. 코드는 INDICATOR_CODES, 기간은 Indicator.period에서 가져온다.
+class EcosQuery(BaseModel):
+	"""한국은행(ECOS) OpenAPI StatisticSearch를 호출할 때 쓰는 조회 조건."""
+
+	# 통계표 코드 (예: 200Y102)
+	stat_code: str = Field(description="ECOS 통계표 코드 (예: 200Y102)")
+	# 주기: 연·분기·월·일 네 가지만 받는다
+	cycle: Literal["A", "Q", "M", "D"] = Field(description="A(연) · Q(분기) · M(월) · D(일)")
+	# 첫 번째 항목코드 (예: 국내총생산 10111)
+	item_code: str = Field(description="통계표 안의 첫 번째 항목코드 (예: 10111)")
+	# 두 번째 항목코드: 실업률처럼 항목이 두 단계인 통계표에만 쓴다
+	item_code2: str | None = Field(
+		# 기본값은 None(값 없음)
+		default=None,
+		# 비워 두면 원계열·계절조정처럼 하위 항목이 모두 함께 조회된다
+		description="두 번째 항목코드 (예: 실업률 원계열 I28A). None이면 하위 항목이 모두 조회된다",
+	)
+	# 조회 시작 시점: cycle과 같은 형식이어야 ECOS가 값을 돌려준다
+	start: str = Field(description="조회 시작 시점. cycle 형식과 같아야 함 (A: 2025, Q: 2026Q1, M: 202607, D: 20261023)")
+	# 조회 끝 시점: start와 같은 형식
+	end: str = Field(description="조회 끝 시점. start와 같은 형식")
+	# 조회 이유: EcosChoice.reason을 그대로 옮긴다
+	reason: str = Field(default="", description="이 데이터를 조회하는 이유")
 
 
 class TermCard(BaseModel):

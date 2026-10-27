@@ -2,6 +2,7 @@
 
 [3.8.8] 4개 그래프가 명세대로 연결되어 compile되는지, registry가 한 번만 만드는지 확인한다.
 [3.8.4] 질의응답 그래프의 분기(route_question·route_after_grade)와 체크포인터를 확인한다.
+[3.8.1] 업로드 그래프의 검증 노드(validate_node)·검증 분기(route_after_validate)를 진짜 validate_pdf()와 임시 PDF로 확인한다.
 노드는 아직 가짜({} 반환)라서 입력으로 넣은 값(error·docs·sections 등)으로 분기를 확인한다 (네트워크·DB·LLM 없이 실행).
 route_question이 부르는 get_chat_model은 가짜 모듈로 바꿔 끼운다 (진짜 llm_client는 import할 때 .env가 필요하고 OpenAI를 부름).
 FakeToolChatModel을 쓰는 노드 동작 테스트와 ingest 통합 테스트는 3.8.9에서 이 파일에 추가한다.
@@ -9,10 +10,12 @@ FakeToolChatModel을 쓰는 노드 동작 테스트와 ingest 통합 테스트�
 실행: poetry run python -m pytest tests/test_graphs.py -v
 """
 
+import importlib
 import subprocess
 import sys
 import types
 
+import pymupdf
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.errors import GraphRecursionError
@@ -20,8 +23,9 @@ from langgraph.graph.state import CompiledStateGraph
 
 from langgraph.checkpoint.memory import InMemorySaver
 
-from hri.domain.schemas import RouteDecision
+from hri.domain.schemas import RouteDecision, Settings, ValidationResult
 from hri.graph import registry
+from hri.graph.ingest_graph import PARALLEL_EXTRACT, VALIDATE_FAILED_REASON, route_after_validate, validate_node
 from hri.graph.checkpointer import get_checkpointer
 from hri.graph.qa_graph import GREETING_RE, ROUTE_SYSTEM_PROMPT, route_after_grade, route_question
 from hri.graph.visualize import draw_graphs
@@ -203,18 +207,84 @@ def test_agent_edges():
 # 3. 가짜 노드로 실제 실행해 분기 확인
 # ─────────────────────────────────────────────────────────────
 
-# [확인 10] 업로드 정상: 8개 노드가 모두 실행되고, split은 세 갈래가 끝난 뒤 한 번만 실행
-def test_ingest_runs_all_nodes():
-	nodes = run_nodes(registry.get_ingest_graph(), {"file_path": "data/raw/sample.pdf", "user_id": "tester"})
-	assert nodes[0] == "validate"
-	assert set(nodes[1:4]) == {"load_text", "extract_tables", "extract_charts"}
+# validate 노드가 진짜 validate_pdf()를 부르도록 준비한다 (네트워크·DB·.env 없이).
+#   - document_service는 cost_korean_won(hri.util.metrics)·insert_usage(hri.dao.usage_dao)도 import하므로
+#     두 모듈은 호출 기록 없는 가짜로 바꿔 끼운다 (test_upload_report와 같은 방식, 업로드 그래프 검증에는 쓰지 않음)
+#   - load_settings()는 .env의 MySQL 값이 없으면 오류이므로 가짜 Settings(MAX_MB=30, MAX_PAGES=150 기본값)로 바꾼다
+@pytest.fixture
+def document_service(monkeypatch):
+	metrics = types.ModuleType("hri.util.metrics")
+	metrics.cost_korean_won = lambda *a, **k: 0.0
+	usage_dao = types.ModuleType("hri.dao.usage_dao")
+	usage_dao.insert_usage = lambda *a, **k: None
+	monkeypatch.setitem(sys.modules, "hri.util.metrics", metrics)
+	monkeypatch.setitem(sys.modules, "hri.dao.usage_dao", usage_dao)
+	monkeypatch.delitem(sys.modules, "hri.service.document_service", raising=False)
+
+	module = importlib.import_module("hri.service.document_service")
+	settings = Settings(mysql_host="localhost", mysql_user="test", mysql_password="test", mysql_database="test")
+	monkeypatch.setattr(module, "load_settings", lambda: settings)
+	return module
+
+
+# 빈 쪽 page_count개짜리 PDF를 tmp_path에 만든다 (password를 주면 여는 암호를 건다)
+def make_pdf(path, page_count=1, password=None):
+	doc = pymupdf.open()
+	for _ in range(page_count):
+		doc.new_page(width=595, height=842)
+	if password is None:
+		doc.save(str(path))
+	else:
+		doc.save(str(path), encryption=pymupdf.PDF_ENCRYPT_AES_256, user_pw=password, owner_pw=password)
+	doc.close()
+	return str(path)
+
+
+# [확인 10] 업로드 정상: 진짜 PDF면 validate가 {'error': None}을 내고, 8개 노드가 모두 실행되며 split은 세 갈래가 끝난 뒤 한 번만 실행
+def test_ingest_runs_all_nodes(document_service, tmp_path):
+	path = make_pdf(tmp_path / "report.pdf", page_count=3)
+	updates = list(registry.get_ingest_graph().stream({"file_path": path, "user_id": "tester"}, stream_mode="updates"))
+	nodes = [name for update in updates for name in update]
+
+	assert updates[0] == {"validate": {"error": None}}
+	assert set(nodes[1:4]) == set(PARALLEL_EXTRACT)
 	assert nodes[4:] == ["process_charts", "split", "summarize_tables", "persist"]
 
 
-# [확인 11] 업로드 검증 실패: state['error']가 있으면 validate 다음 바로 끝
-def test_ingest_stops_when_validate_fails():
-	nodes = run_nodes(registry.get_ingest_graph(), {"file_path": "a.txt", "user_id": "tester", "error": "PDF 파일만 업로드할 수 있습니다"})
+# [확인 11] 업로드 검증 실패: validate_pdf()의 reason이 state['error']에 들어가고, validate 다음 바로 끝 (추출 노드 실행 안 함)
+@pytest.mark.parametrize("kind", ["not_pdf", "missing", "encrypted"])
+def test_ingest_stops_when_validate_fails(document_service, tmp_path, kind):
+	if kind == "not_pdf":
+		path = tmp_path / "memo.txt"
+		path.write_text("PDF가 아님", encoding="utf-8")
+		path = str(path)
+	elif kind == "missing":
+		path = str(tmp_path / "없는파일.pdf")
+	else:
+		path = make_pdf(tmp_path / "locked.pdf", password="1234")
+
+	expected = document_service.validate_pdf(path)
+	assert expected.ok is False
+
+	graph = registry.get_ingest_graph()
+	nodes = run_nodes(graph, {"file_path": path, "user_id": "tester"})
 	assert nodes == ["validate"]
+	assert graph.invoke({"file_path": path, "user_id": "tester"})["error"] == expected.reason
+
+
+# [확인 29] 검증 노드·분기 단위 확인
+#   - route_after_validate: error가 있으면 END, 없으면(None·키 없음) 추출 노드 3개 리스트
+#   - validate_node: ok=False인데 reason이 비어 있으면 VALIDATE_FAILED_REASON, ok=True면 {'error': None}
+def test_validate_node_and_route(document_service, monkeypatch):
+	assert route_after_validate({"error": "PDF 파일만 업로드할 수 있습니다"}) == "__end__"
+	assert route_after_validate({"error": None}) == ["load_text", "extract_tables", "extract_charts"]
+	assert route_after_validate({}) == ["load_text", "extract_tables", "extract_charts"]
+
+	monkeypatch.setattr(document_service, "validate_pdf", lambda path: ValidationResult(ok=False))
+	assert validate_node({"file_path": "x.pdf"}) == {"error": VALIDATE_FAILED_REASON}
+
+	monkeypatch.setattr(document_service, "validate_pdf", lambda path: ValidationResult(ok=True))
+	assert validate_node({"file_path": "x.pdf"}) == {"error": None}
 
 
 # [확인 12] 질의응답 3갈래 + 근거 분기가 save_log로 끝나야 한다
