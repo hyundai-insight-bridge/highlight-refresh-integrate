@@ -15,7 +15,7 @@ class InvalidInputError(Exception):
     """빈 질문·공백 입력·최대 길이(1,000자) 초과일 때 validate_question()이 발생시키는 예외."""
 
 
-
+# 아이디가 없거나 비밀번호가 다른 경우(임세준)
 class LoginFailedError(Exception):
 	"""
 	로그인 실패 (아이디가 없거나 비밀번호가 다를 때)
@@ -25,9 +25,8 @@ class LoginFailedError(Exception):
 	- 보안을 위해 아이디 없음 / 비밀번호 틀림을 나누지 않고 같은 에러로 알린다
 	- Exception을 상속해서 raise / except 를 쓸 수 있고, 추가하는 기능은 없다(pass)
 	"""
-	pass
 
-
+#아이디가 중복인 경우(임세준)
 class DuplicateUserError(Exception):
 	"""
 	회원가입 실패 (이미 사용 중인 아이디일 때)
@@ -37,4 +36,3 @@ class DuplicateUserError(Exception):
 	- on_register()가 except로 받아서 "이미 사용 중인 아이디입니다." 를 보여 준다
 	- Exception을 상속해서 raise / except 를 쓸 수 있고, 추가하는 기능은 없다(pass)
 	"""
-	pass
