@@ -116,24 +116,41 @@ def cost_korean_won(usage: dict[str, UsageMetadata], usd_to_krw: float) -> float
 
 def get_usd_krw() -> float:
 	"""
-	원/달러 환율 가져오기
+	원/달러 환율 가져오기 (토큰 비용 계산용)
 
-	한국은행 ECOS API(get_ecos_exchange_rate)로 최근 원/달러 환율을 가져온다.
-	가져오지 못하면 기본 환율 1,400원을 쓴다.
-	(캐시를 쓰지 않아서 부를 때마다 새로 가져온다)
+	아래 순서로 환율을 가져오고, 먼저 성공한 값을 쓴다.
+	1. 한국수출입은행 API (get_exchange_rate) - 매매기준율, 그날 값이 없으면 전날로 거슬러 올라감
+	2. 한국은행 ECOS API (get_ecos_exchange_rate) - 하루 단위 기준 환율
+	3. 둘 다 실패하면 기본 환율 1,400원
 
-	- get_ecos_exchange_rate()는 엄정현 님 담당(외부데이터)이라 아직 없을 수도 있다.
-	  그래서 함수 안에서 불러오고, 없거나 에러가 나도 1,400원으로 계속 동작한다.
+	- 토큰 비용은 실시간에 가까운 한국수출입은행 환율을 먼저 쓴다.
+	  (보고서·답변에 보여 주는 환율은 신뢰도를 위해 ECOS를 쓴다 → 엄정현 님 담당)
+	- 캐시를 쓰지 않아서 부를 때마다 새로 가져온다.
+	- 두 API 함수는 엄정현 님 담당이라 아직 없을 수도 있다.
+	  그래서 함수 안에서 불러오고, 없거나 에러가 나면 다음 순서로 넘어간다.
 
 	입력: 없음
 	출력: float (원/달러 환율)
 	"""
+	# 1) 한국수출입은행 환율 (API 키를 같이 넘겨야 함)
+	try:
+		from hri.api.exchange_client import get_exchange_rate
+
+		settings = load_settings()
+		usd_krw = get_exchange_rate(settings.koreaexim_api_key, "USD")
+		return usd_krw
+	except Exception:
+		pass
+
+	# 2) 한국은행 ECOS 환율
 	try:
 		from hri.api.ecos_client import get_ecos_exchange_rate
 
 		rate = get_ecos_exchange_rate("USD")
 		usd_krw = float(rate.value)
+		return usd_krw
 	except Exception:
-		usd_krw = DEFAULT_USD_KRW
+		pass
 
-	return usd_krw
+	# 3) 둘 다 실패하면 기본 환율
+	return DEFAULT_USD_KRW
