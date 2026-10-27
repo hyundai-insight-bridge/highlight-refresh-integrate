@@ -3,6 +3,7 @@
 [3.8.8] 4개 그래프가 명세대로 연결되어 compile되는지, registry가 한 번만 만드는지 확인한다.
 [3.8.4] 질의응답 그래프의 분기(route_question·route_after_grade)와 체크포인터를 확인한다.
 [3.8.1] 업로드 그래프의 검증 노드(validate_node)·검증 분기(route_after_validate)를 진짜 validate_pdf()와 임시 PDF로 확인한다.
+[3.8.6] 요약 그래프의 캐시·섹션 분배(fan_out_sections)·3줄·저장 흐름을 가짜 report_dao·summary_prompt 모듈로 확인한다.
 노드는 아직 가짜({} 반환)라서 입력으로 넣은 값(error·docs·sections 등)으로 분기를 확인한다 (네트워크·DB·LLM 없이 실행).
 route_question이 부르는 get_chat_model은 가짜 모듈로 바꿔 끼운다 (진짜 llm_client는 import할 때 .env가 필요하고 OpenAI를 부름).
 FakeToolChatModel을 쓰는 노드 동작 테스트와 ingest 통합 테스트는 3.8.9에서 이 파일에 추가한다.
@@ -23,10 +24,11 @@ from langgraph.graph.state import CompiledStateGraph
 
 from langgraph.checkpoint.memory import InMemorySaver
 
-from hri.domain.schemas import RouteDecision, Settings, ValidationResult
+from hri.domain.schemas import ReportSummary, RouteDecision, Section, SectionSummary, Settings, ThreeLineSummary, ValidationResult
 from hri.graph import registry
 from hri.graph.ingest_graph import PARALLEL_EXTRACT, VALIDATE_FAILED_REASON, route_after_validate, validate_node
 from hri.graph.checkpointer import get_checkpointer
+from hri.graph.summary_graph import NO_SECTIONS_ERROR, fan_out_sections, sort_section_summaries
 from hri.graph.qa_graph import GREETING_RE, ROUTE_SYSTEM_PROMPT, route_after_grade, route_question
 from hri.graph.visualize import draw_graphs
 
@@ -320,16 +322,129 @@ def test_qa_requires_thread_id():
 		registry.get_qa_graph().invoke({"question": "q"})
 
 
-# [확인 14] 요약: 섹션 수만큼 summarize_section이 실행되고 그 뒤 three_lines·save
-def test_summary_fans_out_per_section():
-	nodes = run_nodes(registry.get_summary_graph(), {"report_id": 1, "sections": ["서론", "본론", "결론"]})
+# 요약 그래프 노드가 부르는 김희진 담당 함수를 호출 기록을 남기는 가짜로 바꿔 끼운다 (아직 레포에 없음, DB·LLM 없이 실행)
+#   hri.dao.report_dao: select_sections·update_summary_json·select_summary_json(캐시 읽기, 이름 확인 필요)
+#   hri.prompt.summary_prompt: summarize_sections·summarize_three_lines
+class FakeSummaryDeps:
+	def __init__(self):
+		self.sections = []        # select_sections가 돌려줄 섹션
+		self.cache = None         # select_summary_json이 돌려줄 캐시 (None = 없음)
+		self.calls = {"select_sections": [], "summarize_sections": [], "summarize_three_lines": [], "update_summary_json": [], "select_summary_json": []}
+
+	def select_summary_json(self, report_id):
+		self.calls["select_summary_json"].append(report_id)
+		return self.cache
+
+	def select_sections(self, report_id):
+		self.calls["select_sections"].append(report_id)
+		return self.sections
+
+	def summarize_sections(self, sections):
+		self.calls["summarize_sections"].append(sections)
+		return [SectionSummary(title=s.title, summary=f"{s.title} 요약", start_page=s.start_page, end_page=s.end_page) for s in sections]
+
+	def summarize_three_lines(self, section_summaries):
+		self.calls["summarize_three_lines"].append(section_summaries)
+		return ThreeLineSummary(reasoning="생각", lines=["주장", "근거", "시사점"])
+
+	def update_summary_json(self, report_id, summary):
+		self.calls["update_summary_json"].append((report_id, summary))
+		return 1
+
+
+@pytest.fixture
+def summary_deps(monkeypatch):
+	fake = FakeSummaryDeps()
+	report_dao = types.ModuleType("hri.dao.report_dao")
+	for name in ("select_summary_json", "select_sections", "update_summary_json"):
+		setattr(report_dao, name, getattr(fake, name))
+	summary_prompt = types.ModuleType("hri.prompt.summary_prompt")
+	for name in ("summarize_sections", "summarize_three_lines"):
+		setattr(summary_prompt, name, getattr(fake, name))
+	monkeypatch.setitem(sys.modules, "hri.dao.report_dao", report_dao)
+	monkeypatch.setitem(sys.modules, "hri.prompt.summary_prompt", summary_prompt)
+	import hri.dao, hri.prompt
+	monkeypatch.setattr(hri.dao, "report_dao", report_dao, raising=False)
+	monkeypatch.setattr(hri.prompt, "summary_prompt", summary_prompt, raising=False)
+	return fake
+
+
+def make_section(no, title, start, end):
+	return Section(report_id=1, section_no=no, title=title, start_page=start, end_page=end, text=f"{title} 본문")
+
+
+# [확인 14] 요약 정상: 캐시 없음 → 섹션 수만큼 summarize_section(섹션 1개씩) → three_lines → save
+#           three_lines·save에는 start_page 순으로 정렬된 요약이 넘어가고, 저장되는 ReportSummary에 3줄이 담긴다
+def test_summary_fans_out_per_section(summary_deps):
+	# 일부러 쪽 순서를 섞어 넣는다 (병렬 결과가 모이는 순서를 믿지 않는지 확인)
+	summary_deps.sections = [make_section(2, "결론", 9, 10), make_section(0, "서론", 1, 3), make_section(1, "본론", 4, 8)]
+	graph = registry.get_summary_graph()
+	nodes = run_nodes(graph, {"report_id": 1})
+
 	assert nodes == ["load_cache", "load_sections", "summarize_section", "summarize_section", "summarize_section", "three_lines", "save"]
+	assert all(len(arg) == 1 for arg in summary_deps.calls["summarize_sections"])          # summarize_sections([section])
+	assert [s.title for s in summary_deps.calls["summarize_three_lines"][0]] == ["서론", "본론", "결론"]
+	report_id, saved = summary_deps.calls["update_summary_json"][0]
+	assert report_id == 1 and isinstance(saved, ReportSummary)
+	assert saved.three_lines == ["주장", "근거", "시사점"]
+	assert [s.title for s in saved.sections] == ["서론", "본론", "결론"]
 
 
-# [확인 15] 요약: state['error'](섹션 0개)면 load_sections 다음 바로 끝
-def test_summary_stops_on_error():
-	nodes = run_nodes(registry.get_summary_graph(), {"report_id": 1, "sections": [], "error": "요약할 섹션이 없습니다"})
+# [확인 15] 요약 섹션 0개: load_sections가 state['error']를 설정하고 바로 끝 (LLM·저장 호출 없음)
+def test_summary_stops_on_error(summary_deps):
+	summary_deps.sections = []
+	graph = registry.get_summary_graph()
+	nodes = run_nodes(graph, {"report_id": 1})
 	assert nodes == ["load_cache", "load_sections"]
+	assert graph.invoke({"report_id": 1})["error"] == NO_SECTIONS_ERROR
+	assert summary_deps.calls["summarize_sections"] == [] and summary_deps.calls["update_summary_json"] == []
+
+
+# [확인 30] 요약 캐시 있음: load_cache 다음 바로 끝, 섹션 조회·LLM·저장을 하지 않고 캐시 내용이 state에 담긴다
+@pytest.mark.parametrize("as_dict", [False, True], ids=["ReportSummary", "JSON_dict"])
+def test_summary_uses_cache(summary_deps, as_dict):
+	cached = ReportSummary(
+		report_id=1, three_lines=["캐시1", "캐시2", "캐시3"],
+		sections=[SectionSummary(title="서론", summary="요약", start_page=1, end_page=3)],
+	)
+	summary_deps.cache = cached.model_dump(mode="json") if as_dict else cached
+	graph = registry.get_summary_graph()
+
+	assert run_nodes(graph, {"report_id": 1}) == ["load_cache"]
+	result = graph.invoke({"report_id": 1})
+	assert result["three_lines"] == ["캐시1", "캐시2", "캐시3"]
+	assert [s.title for s in result["section_summaries"]] == ["서론"]
+	assert summary_deps.calls["select_sections"] == [] and summary_deps.calls["summarize_sections"] == []
+	assert summary_deps.calls["update_summary_json"] == []
+
+
+# [확인 31] 캐시 읽는 DAO 함수가 아직 없으면(이름 확인 필요) 캐시가 없는 것으로 보고 새로 요약한다
+def test_summary_without_cache_reader(summary_deps):
+	delattr(sys.modules["hri.dao.report_dao"], "select_summary_json")
+	summary_deps.sections = [make_section(0, "서론", 1, 3)]
+	nodes = run_nodes(registry.get_summary_graph(), {"report_id": 1})
+	assert nodes == ["load_cache", "load_sections", "summarize_section", "three_lines", "save"]
+
+
+# [확인 32] fan_out_sections 단위: error면 END, 아니면 섹션마다 Send('summarize_section', {'section': s})
+def test_fan_out_sections_unit():
+	assert fan_out_sections({"error": NO_SECTIONS_ERROR, "sections": []}) == "__end__"
+	sections = [make_section(0, "서론", 1, 3), make_section(1, "본론", 4, 8)]
+	sends = fan_out_sections({"sections": sections})
+	assert [(send.node, send.arg) for send in sends] == [
+		("summarize_section", {"section": sections[0]}),
+		("summarize_section", {"section": sections[1]}),
+	]
+
+
+# [확인 33] sort_section_summaries: start_page 순, start_page가 없으면 맨 뒤
+def test_sort_section_summaries():
+	items = [
+		SectionSummary(title="C", summary="s", start_page=9, end_page=10),
+		SectionSummary(title="없음", summary="s"),
+		SectionSummary(title="A", summary="s", start_page=1, end_page=3),
+	]
+	assert [s.title for s in sort_section_summaries(items)] == ["A", "C", "없음"]
 
 
 # [확인 16] 에이전트: 마지막 메시지에 도구 호출이 없으면 agent 한 번으로 끝
