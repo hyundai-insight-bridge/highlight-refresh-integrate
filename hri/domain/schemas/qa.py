@@ -27,7 +27,7 @@ class AnswerResult(BaseModel):
 
 
 class SuggestOutput(BaseModel):
-    """suggest_questions()가 with_structured_output()으로 받는 후속 질문과 용어."""
+    """suggest_questions()가 with_structured_output()으로 받는 후속 질문."""
 
     questions: list[str] = Field(
         min_length=3,
@@ -42,8 +42,10 @@ class SearchHit(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     chunk: Chunk
-    score: float  # 관련도 = 1 - 거리
-    embedding: list[float]  # mmr_select()에서 유사도 계산에 사용
+    score: float  
+    """관련도 = 1 - 거리"""
+    embedding: list[float]
+    """mmr_select()에서 유사도 계산에 사용"""
 
 
 class ContextDoc(BaseModel):
@@ -57,5 +59,6 @@ class ContextDoc(BaseModel):
     page_start: int
     page_end: int
     text: str
-    needs_review: bool = False  # 차트 OCR 추정값이면 True
+    needs_review: bool = False
+    """차트 OCR 추정값이면 True"""
 
