@@ -1,4 +1,4 @@
-"""공통 예외 · ChartExtractError, ExternalApiError (엄정현) / InvalidInputError (서동안) / OutputFormatError (김희진) / LoginFailedError, DuplicateUserError (임세준)"""
+"""공통 예외 · ChartExtractError(엄정현), ExternalApiError (류현수) / InvalidInputError (서동안) / OutputFormatError (김희진) / LoginFailedError, DuplicateUserError (임세준)"""
 
 # (엄정현) 보고서 파일 올라왔을때 OCR과 vision medel이 구조화 실패한 경우.
 class ChartExtractError(Exception):
@@ -10,6 +10,12 @@ class ChartExtractError(Exception):
 	"""
 """질의응답 예외 (exception.errors)."""
 
+class ExternalApiError(Exception):
+	user_message = "데이터를 불러오지 못 했습니다."
+
+	def __init__(self, msg: str):
+		super().__init__(msg or self.user_message)
+		self.user_message = msg or self.user_message
 
 class InvalidInputError(Exception):
     """빈 질문·공백 입력·최대 길이(1,000자) 초과일 때 validate_question()이 발생시키는 예외."""
