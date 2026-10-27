@@ -77,31 +77,31 @@ def cost_korean_won(usage: dict[str, UsageMetadata], usd_to_krw: float) -> float
 	단가는 .env의 MODEL_PRICES(1M 토큰당 USD)에서 읽는다.
 
 	- OpenAI는 모델 이름 뒤에 날짜를 붙여서 알려 준다 ("gpt-5-mini-2025-08-07").
-	  그래서 단가표의 이름("gpt-5-mini")으로 시작하는지 보고 단가를 찾는다.
+	  그래서 모델 이름의 앞부분이 단가표 이름("gpt-5-mini")과 같은지 보고 단가를 찾는다.
 	- 단가표에 없는 모델은 0원으로 계산한다.
 	- DB에 저장하지 않고 계산만 하는 함수다 (저장은 insert_usage, save_qa_log가 함)
 
 	입력: usage (모델별 토큰 수 딕셔너리), usd_to_krw (원/달러 환율, get_usd_krw()로 받은 값)
 	출력: float (원화 비용, 소수점 넷째 자리까지)
 	"""
-	# 모델별 단가표 (글자로 저장돼 있어서 딕셔너리로 바꿈)
+	# 모델별 단가표 (.env에 글자로 저장돼 있어서 딕셔너리로 바꿈)
 	settings = load_settings()
 	prices = json.loads(settings.model_prices)
 
 	total_won = 0.0
 
-	for model_name in usage:
-		tokens = usage[model_name]
+	for model_name, tokens in usage.items():
 		input_tokens = tokens["input_tokens"]
 		output_tokens = tokens["output_tokens"]
 
 		# 단가표에서 이 모델의 단가 찾기
+		# 모델 이름 앞부분을 단가표 이름 길이만큼 잘라서 같은지 비교
 		price = None
-		for price_name in prices:
-			if model_name.startswith(price_name):
-				price = prices[price_name]
+		for price_name, model_price in prices.items():
+			if model_name[0:len(price_name)] == price_name:
+				price = model_price
 
-		# 단가가 없으면 0원으로 하고 넘어감
+		# 단가가 없으면 0원으로 하고 다음 모델로 넘어감
 		if price == None:
 			continue
 
