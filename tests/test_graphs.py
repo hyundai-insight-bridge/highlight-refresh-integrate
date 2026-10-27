@@ -1,7 +1,9 @@
 """그래프 분기·통합 테스트 · test_*_graph (엄정현)
 
-[뼈대 단계 · 3.8.8] 4개 그래프가 명세대로 연결되어 compile되는지, registry가 한 번만 만드는지 확인한다.
-노드는 아직 가짜({} 반환)라서 입력으로 넣은 값(error·docs·sections 등)으로 분기만 확인한다 (네트워크·DB·LLM 없이 실행).
+[3.8.8] 4개 그래프가 명세대로 연결되어 compile되는지, registry가 한 번만 만드는지 확인한다.
+[3.8.4] 질의응답 그래프의 분기(route_question·route_after_grade)와 체크포인터를 확인한다.
+노드는 아직 가짜({} 반환)라서 입력으로 넣은 값(error·docs·sections 등)으로 분기를 확인한다 (네트워크·DB·LLM 없이 실행).
+route_question이 부르는 get_chat_model은 가짜 모듈로 바꿔 끼운다 (진짜 llm_client는 import할 때 .env가 필요하고 OpenAI를 부름).
 FakeToolChatModel을 쓰는 노드 동작 테스트와 ingest 통합 테스트는 3.8.9에서 이 파일에 추가한다.
 
 실행: poetry run python -m pytest tests/test_graphs.py -v
@@ -9,14 +11,19 @@ FakeToolChatModel을 쓰는 노드 동작 테스트와 ingest 통합 테스트�
 
 import subprocess
 import sys
+import types
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.errors import GraphRecursionError
 from langgraph.graph.state import CompiledStateGraph
 
+from langgraph.checkpoint.memory import InMemorySaver
+
+from hri.domain.schemas import RouteDecision
 from hri.graph import registry
 from hri.graph.checkpointer import get_checkpointer
+from hri.graph.qa_graph import GREETING_RE, ROUTE_SYSTEM_PROMPT, route_after_grade, route_question
 from hri.graph.visualize import draw_graphs
 
 GETTERS = [registry.get_ingest_graph, registry.get_qa_graph, registry.get_summary_graph, registry.get_agent_graph]
@@ -32,6 +39,40 @@ def clear_graph_cache():
 	for getter in GETTERS:
 		getter.cache_clear()
 	get_checkpointer.cache_clear()
+
+
+class FakeClassifier:
+	"""get_chat_model()이 돌려주는 모델 흉내. with_structured_output(RouteDecision).invoke()가 정해 둔 route를 돌려준다.
+
+	route: LLM이 고를 값 / calls: get_chat_model에 넘긴 인자 / schemas: with_structured_output에 넘긴 양식 / inputs: invoke에 넘긴 메시지
+	"""
+
+	def __init__(self, route="chat"):
+		self.route = route
+		self.calls, self.schemas, self.inputs = [], [], []
+
+	def get_chat_model(self, **kwargs):
+		self.calls.append(kwargs)
+		return self
+
+	def with_structured_output(self, schema):
+		self.schemas.append(schema)
+		return self
+
+	def invoke(self, messages):
+		self.inputs.append(messages)
+		return self.schemas[-1](route=self.route)
+
+
+# 진짜 llm_client 대신 가짜 모듈을 끼운다. search 모듈도 가짜 llm_client로 다시 import되게 지운다 (extract_keywords는 진짜 사용)
+@pytest.fixture(autouse=True)
+def fake_llm(monkeypatch):
+	fake = FakeClassifier()
+	module = types.ModuleType("hri.llm.llm_client")
+	module.get_chat_model = fake.get_chat_model
+	monkeypatch.setitem(sys.modules, "hri.llm.llm_client", module)
+	monkeypatch.delitem(sys.modules, "hri.retriever.search", raising=False)
+	return fake
 
 
 # 그래프를 실행하며 실행된 노드 이름을 순서대로 모은다 (stream_mode='updates': 노드가 끝날 때마다 {노드: 바뀐 값})
@@ -250,3 +291,123 @@ def test_draw_graphs_writes_mermaid(tmp_path):
 		text = open(path, encoding="utf-8").read()
 		assert "```mermaid" in text and "graph TD" in text
 	assert "process_charts" in open(paths[0], encoding="utf-8").read()
+
+
+# ─────────────────────────────────────────────────────────────
+# 5. [3.8.4] 질의응답 분기 · 체크포인터
+# ─────────────────────────────────────────────────────────────
+
+# [확인 19] GREETING_RE: 질문 '전체'가 인사·감사·잡담 표현일 때만 맞아야 한다
+@pytest.mark.parametrize("text", [
+	# ① 인사·감사
+	"안녕하세요", "안녕", "감사합니다 ㅎㅎ", "고마워요!", "수고하셨습니다~", "안녕하세요 감사합니다", "Hello", "thanks!",
+	# ② 웃음·감탄
+	"ㅋㅋ", "ㅎㅎㅎ", "음...", "오", "와!", "오오~",
+	# ③ 챗봇에 대한 질문
+	"너는 누구야?", "넌 누구니", "누구세요?", "뭐 할 수 있어?", "너는 무엇을 할 수 있나요?", "이 서비스 기능", "이 서비스는 무슨 기능이 있어?",
+	# ④ 일상 잡담
+	"날씨", "오늘 날씨 어때?", "날씨 좋네요", "배고프다", "배고파요", "심심해", "잘 지내?", "잘 지내셨어요?",
+	# 여러 개가 이어진 경우
+	"안녕하세요! 너는 누구야?", "ㅋㅋ 심심해",
+])
+def test_greeting_re_matches(text):
+	assert GREETING_RE.match(text)
+
+
+# 문장 일부에만 잡담 표현이 있거나, 보고서 질문이 섞이면 맞지 않아야 한다 (3단계로 감)
+@pytest.mark.parametrize("text", [
+	"안녕하세요, 금리 전망 알려주세요", "감사합니다. 그럼 물가는요?", "GDP 성장률은?",
+	"날씨가 경제에 미치는 영향은?", "오늘 환율 어때?", "음, 금리 전망은?", "ㅋㅋ 그래서 GDP는?",
+	"한국은행 총재는 누구야?", "이 서비스 기능으로 지표 비교가 되나요?", "뭐 할 수 있어? 금리 전망 알려줘",
+	"ㅇㅇ", "...", "",
+])
+def test_greeting_re_does_not_match(text):
+	assert not GREETING_RE.match(text)
+
+
+# [확인 20] route_question 1순위: state['error']가 있으면 인사말이어도 'error'
+def test_route_question_error_first(fake_llm):
+	assert route_question({"question": "안녕하세요", "error": "질문이 너무 깁니다"}) == "error"
+	assert fake_llm.calls == []
+
+
+# [확인 21] route_question 2순위: 인사·감사·잡담이면 'chat'
+#           3단계 extract_keywords 전에 갈라지므로 search 모듈을 import하지도 않고, LLM도 부르지 않는다
+@pytest.mark.parametrize("question", ["감사합니다!", "ㅋㅋ", "음...", "너는 누구야?", "이 서비스 기능", "오늘 날씨 어때?", "심심해", "잘 지내?"])
+def test_route_question_chat_before_keywords(fake_llm, question):
+	assert route_question({"question": question}) == "chat"
+	assert "hri.retriever.search" not in sys.modules
+	assert fake_llm.calls == []
+
+
+# [확인 22] route_question 3순위: extract_keywords() 결과가 있으면 'rewrite' (LLM 호출 없음)
+@pytest.mark.parametrize("question", ["2026년 GDP 성장률은?", "그거 전망은?", "안녕하세요, 금리 전망 알려주세요"])
+def test_route_question_keywords_is_rewrite(fake_llm, question):
+	assert route_question({"question": question}) == "rewrite"
+	assert fake_llm.calls == []
+
+
+# [확인 23] route_question 4순위: 잡담 정규식에도 안 맞고 키워드도 없으면('ㅇㅇ') LLM(temperature=0, RouteDecision)이 고른 값을 따른다
+@pytest.mark.parametrize("llm_route", ["chat", "rewrite"])
+def test_route_question_ambiguous_uses_llm(fake_llm, llm_route):
+	fake_llm.route = llm_route
+	assert route_question({"question": "ㅇㅇ"}) == llm_route
+	assert fake_llm.calls == [{"temperature": 0}]
+	assert fake_llm.schemas == [RouteDecision]
+	assert fake_llm.inputs[0] == [
+		{"role": "system", "content": ROUTE_SYSTEM_PROMPT},
+		{"role": "user", "content": "ㅇㅇ"},
+	]
+
+
+# [확인 24] route_after_grade: has_context(docs)가 True면 'generate', 비었거나 없으면 'no_answer'
+@pytest.mark.parametrize(("state", "expected"), [
+	({"docs": ["근거 청크"]}, "generate"),
+	({"docs": []}, "no_answer"),
+	({}, "no_answer"),
+])
+def test_route_after_grade(state, expected):
+	assert route_after_grade(state) == expected
+
+
+# [확인 25] 그래프 실행: 인사·잡담은 LLM 답과 상관없이 chat → save_log, 애매한 말은 LLM이 고른 갈래로 간다
+@pytest.mark.parametrize(("question", "llm_route", "expected"), [
+	("안녕하세요", "rewrite", ["validate", "chat", "save_log"]),
+	("오늘 날씨 어때?", "rewrite", ["validate", "chat", "save_log"]),
+	("ㅇㅇ", "chat", ["validate", "chat", "save_log"]),
+	("ㅇㅇ", "rewrite", ["validate", "rewrite", "retrieve", "grade", "no_answer", "save_log"]),
+])
+def test_qa_graph_chat_and_llm_routes(fake_llm, question, llm_route, expected):
+	fake_llm.route = llm_route
+	nodes = run_nodes(registry.get_qa_graph(), {"question": question}, {"configurable": {"thread_id": "s1"}})
+	assert nodes == expected
+
+
+# [확인 26] get_checkpointer(): InMemorySaver 하나만 만든다
+def test_checkpointer_is_single_in_memory_saver():
+	assert isinstance(get_checkpointer(), InMemorySaver)
+	assert get_checkpointer() is get_checkpointer()
+
+
+# [확인 27] thread_id(=session_id)별로 state가 따로 저장된다
+def test_checkpointer_keeps_state_per_thread():
+	graph = registry.get_qa_graph()
+	a, b = {"configurable": {"thread_id": "session-a"}}, {"configurable": {"thread_id": "session-b"}}
+	graph.invoke({"question": "금리 전망은?", "persona": "입문자"}, a)
+	graph.invoke({"question": "물가 전망은?", "persona": "전문가"}, b)
+	assert graph.get_state(a).values["persona"] == "입문자"
+	assert graph.get_state(b).values["persona"] == "전문가"
+
+
+# [확인 28] messages 외 필드는 이전 턴 값이 남는다 → ask_stream이 매 턴 초기화해야 하는 이유
+#           1턴에서 docs가 있었으면, 2턴에 docs를 안 넣으면 남은 docs 때문에 generate로 가고 / docs=[]로 넣으면 no_answer로 간다
+def test_previous_turn_fields_remain_unless_reset():
+	graph = registry.get_qa_graph()
+	config = {"configurable": {"thread_id": "session-c"}}
+	graph.invoke({"question": "금리 전망은?", "docs": ["1턴 근거"]}, config)
+
+	not_reset = run_nodes(graph, {"question": "물가 전망은?"}, config)
+	assert "generate" in not_reset
+
+	reset = run_nodes(graph, {"question": "물가 전망은?", "docs": []}, config)
+	assert "no_answer" in reset and "generate" not in reset
