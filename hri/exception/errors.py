@@ -17,10 +17,24 @@ class InvalidInputError(Exception):
 
 
 class LoginFailedError(Exception):
-	"""로그인 실패 (아이디가 없거나 비밀번호가 다를 때)"""
+	"""
+	로그인 실패 (아이디가 없거나 비밀번호가 다를 때)
+
+	- login()이 아이디가 없거나 비밀번호가 다르면 raise 한다
+	- on_login()이 except로 받아서 "아이디 또는 비밀번호가 올바르지 않습니다." 를 보여 준다
+	- 보안을 위해 아이디 없음 / 비밀번호 틀림을 나누지 않고 같은 에러로 알린다
+	- Exception을 상속해서 raise / except 를 쓸 수 있고, 추가하는 기능은 없다(pass)
+	"""
 	pass
 
 
 class DuplicateUserError(Exception):
-	"""회원가입 실패 (이미 사용 중인 아이디일 때)"""
+	"""
+	회원가입 실패 (이미 사용 중인 아이디일 때)
+
+	- register()가 select_user()로 확인해서 같은 아이디가 있으면 raise 한다
+	  (users.user_id는 겹칠 수 없음 = UNIQUE 제약)
+	- on_register()가 except로 받아서 "이미 사용 중인 아이디입니다." 를 보여 준다
+	- Exception을 상속해서 raise / except 를 쓸 수 있고, 추가하는 기능은 없다(pass)
+	"""
 	pass
