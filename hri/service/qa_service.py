@@ -11,9 +11,18 @@ from hri.exception.errors import InvalidInputError
 
 MAX_QUESTION_LENGTH = 1000
 
-# 010-1234-5678 · 01012345678 · 02-123-4567 처럼 0으로 시작하는 국내 전화번호
-PHONE_RE = re.compile(r"(?<!\d)(0\d{1,2})([-.\s]?)(\d{3,4})([-.\s]?)(\d{4})(?!\d)")
-EMAIL_RE = re.compile(r"([\w.+-]+)@([\w-]+(?:\.[\w-]+)+)")
+# 회원가입 정보(이름·아이디·비밀번호)만 가린다. 질문 안에서 라벨('이름:', '아이디는', '비번')
+# 바로 뒤에 오는 값을 찾으며, 그룹 1은 라벨·구분 부분, 그룹 2는 가릴 값이다.
+_SEP = r"\s*(?:(?:는|은|가|이)(?=[\s:=]))?\s*[:=]?\s*"  # 조사는 뒤에 공백이 있을 때만(이몽·가영 같은 이름 보호)
+NAME_RE = re.compile(
+    rf"((?:이름|성명){_SEP})(?!뭐|무엇|뭔|어떻)([가-힣]{{2,4}}?)"
+    r"(?=입니다|이고|이에요|예요|이야|인데|이며|이다|이요|이라|(?![가-힣]))"
+)
+ID_RE = re.compile(rf"((?<![A-Za-z])(?:아이디|ID){_SEP})([A-Za-z0-9_.\-]{{3,}})", re.IGNORECASE)
+PASSWORD_RE = re.compile(
+    rf"((?<![A-Za-z])(?:비밀번호|비번|패스워드|암호|password|passwd|pwd|pw){_SEP})([!-~]+)",
+    re.IGNORECASE,
+)
 
 
 def validate_question(question: str) -> str:
@@ -27,12 +36,15 @@ def validate_question(question: str) -> str:
 
 
 def mask_pii(text: str) -> str:
-    """이메일(ki***@naver.com)과 전화번호(010-****-6789)를 가린다.
+    """이름(홍*동)·아이디(abc***)·비밀번호(********)를 가린다.
 
-    LLM 호출 전과 qa_logs 저장 전에 사용한다. 이메일을 먼저 가려야 주소 안의 숫자가 전화번호로 잡히지 않는다.
+    LLM 호출 전과 qa_logs 저장 전에 사용한다. '이름: 홍길동'처럼 라벨이 붙은 값만 찾는다.
     """
-    text = EMAIL_RE.sub(
-        lambda m: f"{m.group(1)[:2] if len(m.group(1)) > 2 else m.group(1)[:1]}***@{m.group(2)}",
+    text = NAME_RE.sub(lambda m: m.group(1) + m.group(2)[0] + "*" * (len(m.group(2)) - 2) + m.group(2)[-1]
+                       if len(m.group(2)) > 2 else m.group(1) + m.group(2)[0] + "*", text)
+    text = ID_RE.sub(
+        lambda m: m.group(1) + m.group(2)[:3 if len(m.group(2)) > 3 else 1]
+        + "*" * (len(m.group(2)) - (3 if len(m.group(2)) > 3 else 1)),
         text,
     )
-    return PHONE_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}****{m.group(4)}{m.group(5)}", text)
+    return PASSWORD_RE.sub(lambda m: m.group(1) + "********", text)
