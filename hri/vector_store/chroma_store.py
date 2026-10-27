@@ -5,7 +5,7 @@ from hri.config.settings import load_settings
 from hri.domain.schemas import Chunk
 from hri.vector_store.embedding import embed_texts
 import base64, os
-from langchain_chroma import Chroma
+
 
 BATCH_SIZE = 100 # embed_texts, collection.add를 나눠 호출하는 단위
 
