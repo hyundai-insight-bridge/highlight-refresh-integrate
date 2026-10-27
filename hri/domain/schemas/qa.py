@@ -20,7 +20,7 @@ class AnswerResult(BaseModel):
     sources: list[dict] = Field(default_factory=list)
     suggestions: list[str] = Field(default_factory=list)
     has_source: bool = False
-    route: Literal["chat", "rewrite", "error"]
+    route: Literal["rag", "no_answer", "chat", "error"]
     tokens: int = 0
     cost_krw: float = 0.0
     log_id: int | None = None
