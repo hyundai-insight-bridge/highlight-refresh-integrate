@@ -10,12 +10,11 @@ class ChartExtractError(Exception):
 	"""
 """질의응답 예외 (exception.errors)."""
 
-
+# 서동안
 class InvalidInputError(Exception):
     """빈 질문·공백 입력·최대 길이(1,000자) 초과일 때 validate_question()이 발생시키는 예외."""
 
-
-
+# 임세준
 class LoginFailedError(Exception):
 	"""
 	로그인 실패 (아이디가 없거나 비밀번호가 다를 때)
@@ -27,7 +26,6 @@ class LoginFailedError(Exception):
 	"""
 	pass
 
-
 class DuplicateUserError(Exception):
 	"""
 	회원가입 실패 (이미 사용 중인 아이디일 때)
@@ -38,3 +36,7 @@ class DuplicateUserError(Exception):
 	- Exception을 상속해서 raise / except 를 쓸 수 있고, 추가하는 기능은 없다(pass)
 	"""
 	pass
+
+# 김희진
+class OutputFormatError(Exception):
+	"""LLM 출력이 요구한 형식에 맞지 않아 재시도 후에도 실패했을 때"""
