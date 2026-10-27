@@ -10,7 +10,7 @@ from hri.config.settings import load_settings
 from hri.domain.schemas.external import EcosExchangeRate, EcosQuery, Indicator
 
 EXCHANGE_STAT_CODE = "731Y001"
-CURRENCY_ITEM_CODES = {"USD": "0000001", "JPY(100엔)": "0000002", "EUR": "0000003"}
+CURRENCY_ITEM_CODES = {"USD": "0000001", "JPY": "0000002", "EUR": "0000003"}
 
 # 모듈 내에서 사용되는 client 반환 함수
 # 이후 사용할 때 client를 여러번 재생성하지 않고, 각 함수에서 파라미터로 전달받아 재활용

@@ -65,7 +65,7 @@ def test_invalid_key_raises():
 
 
 # [확인 5] CURRENCY_ITEM_CODES의 항목코드가 실제 731Y001 항목명과 맞는지
-@pytest.mark.parametrize("currency, keyword", [("USD", "미국달러"), ("JPY(100엔)", "일본엔"), ("EUR", "유로")])
+@pytest.mark.parametrize("currency, keyword", [("USD", "미국달러"), ("JPY", "일본엔"), ("EUR", "유로")])
 def test_currency_item_codes(client, currency, keyword):
 	items = {i.item_code: i.item_name for i in client.list_items(ecos_client.EXCHANGE_STAT_CODE, end_num=1000)}
 	code = ecos_client.CURRENCY_ITEM_CODES[currency]
