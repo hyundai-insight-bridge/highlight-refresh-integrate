@@ -43,7 +43,6 @@ def insert_usage(usage: LlmUsage) -> int:
 		usage.model,
 		usage.input_tokens,
 		usage.output_tokens,
-		usage.cost_krw
 	)
 
 	with get_connection() as conn:
