@@ -13,3 +13,14 @@ class ChartExtractError(Exception):
 
 class InvalidInputError(Exception):
     """빈 질문·공백 입력·최대 길이(1,000자) 초과일 때 validate_question()이 발생시키는 예외."""
+
+
+
+class LoginFailedError(Exception):
+	"""로그인 실패 (아이디가 없거나 비밀번호가 다를 때)"""
+	pass
+
+
+class DuplicateUserError(Exception):
+	"""회원가입 실패 (이미 사용 중인 아이디일 때)"""
+	pass
