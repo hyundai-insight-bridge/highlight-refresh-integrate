@@ -1,6 +1,5 @@
-"""회원·기록 스키마 · User, QALog, LlmUsage (임세준)"""
+"""회원·기록 스키마 · User, QALog, LlmUsage (임세준)
 
-"""
 회원 정보, 질문 기록, LLM 사용량 기록을 담는 Pydantic 모델 모음.
 - User: 로그인한 회원 정보 (user_service, user_view에서 사용)
 - QALog: 질문 한 번의 기록 (질문 기록 저장·조회, 내 기록 화면, 관리자 대시보드에서 사용)
@@ -73,12 +72,13 @@ class LlmUsage(BaseModel):
 	LLM 사용량 기록 한 줄 (llm_usage 테이블)
 
 	업로드·질의응답·요약·요청 실행에서 LLM을 쓴 뒤
-	어떤 모델로 토큰을 얼마나 썼고 비용이 얼마인지 이 모델에 담아 저장한다.
+	어떤 모델로 토큰을 얼마나 썼는지 이 모델에 담아 저장한다.
 	flow로 어디서 썼는지 나누고, ref_id로 질문 기록(log_id)이나 보고서(report_id)와 연결한다.
 
 	- 업로드처럼 질문 기록이 없는 경우도 있어서 user_id·ref_id는 없어도 된다(None)
-	- 비용(cost_krw)은 cost_korean_won()으로 계산한 원화 값
-	- 대시보드의 flow별 토큰 사용량·비용 합계를 이 기록으로 계산한다
+	- 비용(cost_krw)은 참고용으로만 담는 값이다 (DB llm_usage에는 저장하지 않음)
+	  넣지 않아도 되고(None), 넣어도 insert_usage()가 저장하지 않는다
+	- 대시보드의 flow별 토큰 사용량 합계를 이 기록으로 계산한다
 
 	사용하는 곳: insert_usage(), upload_report(), save_log_node(), summarize_report(), run_agent_with_tools()
 	"""
@@ -91,5 +91,5 @@ class LlmUsage(BaseModel):
 	model: str = Field(description="사용한 모델 이름")
 	input_tokens: int = Field(description="입력 토큰 수", ge=0)
 	output_tokens: int = Field(description="출력 토큰 수", ge=0)
-	cost_krw: float = Field(description="원화 비용", ge=0)
+	cost_krw: Optional[float] = Field(default=None, description="원화 비용 (참고용, DB에는 저장하지 않음)", ge=0)
 	created_at: Optional[datetime] = Field(default=None, description="기록한 시간 (저장하기 전에는 None)")

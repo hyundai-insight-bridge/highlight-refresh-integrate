@@ -4,8 +4,16 @@ from chromadb.api.models.Collection import Collection
 from hri.config.settings import load_settings
 from hri.domain.schemas import Chunk
 from hri.vector_store.embedding import embed_texts
+import base64, os
+
 
 BATCH_SIZE = 100 # embed_texts, collection.add를 나눠 호출하는 단위
+
+def basic_auth_header() -> dict[str, str]:
+    """CHROMA_USER / CHROMA_PASSWORD 환경변수로 Basic 인증 헤더 생성"""
+    credentials = f"{os.environ['CHROMA_USER']}:{os.environ['CHROMA_PASSWORD']}"
+    token = base64.b64encode(credentials.encode()).decode()
+    return {"Authorization": f"Basic {token}"}
 
 def get_collection() -> Collection:
     """
@@ -20,12 +28,10 @@ def get_collection() -> Collection:
     if settings.chroma_mode == "persistent":
         client = chromadb.PersistentClient(path=settings.chroma_persist_path)
     else:
-        client = chromadb.HttpClient(host=settings.chroma_host, port=settings.chroma_port)
-
+        client = chromadb.HttpClient(host=settings.chroma_host, port=settings.chroma_port, ssl=True, headers=basic_auth_header(),)
     return client.get_or_create_collection(name=settings.chroma_collection,
                                            metadata={"hnsw:space": "cosine"},
                                            embedding_function=None)
-
 
 def add_chunks(chunks: list[Chunk]) -> int:
     """

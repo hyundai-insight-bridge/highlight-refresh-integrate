@@ -69,7 +69,7 @@ import logging
 from collections.abc import Iterator
 from langchain_core.callbacks import UsageMetadataCallbackHandler
 from hri.graph.registry import get_ingest_graph
-from hri.util.metrics import cost_korean_won
+from hri.llm.llm_client import cost_korean_won
 from hri.dao.usage_dao import insert_usage
 
 logger = logging.getLogger(__name__)
@@ -94,11 +94,12 @@ def upload_report(file_path: str, user_id: str) -> Iterator[dict]:
         ):
             for node, state in update.items():
                 yield {"type": "progress", "step": node}
-                if node == "validate" and not state.get("ok", True):
-                    result = {"type": "error", "reason": state.get("reason", "PDF 검증 실패")}
+                state = state or {}
+                if node == "validate" and state.get("error"):
+                    result = {"type": "error", "reason": state.get("error")}
                 
                 if node == "persist":
-                    report_id = state["report_id"]
+                    report_id = state.get("report_id")
                     result = {"type": "result", "report_id": report_id,
                              "counts": state.get("counts", {}),
                              "warnings": state.get("warnings", [])}

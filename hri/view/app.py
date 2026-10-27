@@ -11,7 +11,7 @@ import gradio as gr
 from hri.config.settings import load_settings
 from hri.graph.registry import get_ingest_graph, get_qa_graph, get_summary_graph, get_agent_graph
 from hri.view.user_view import build_login_tab, on_login, on_logout, login_components
-from hri.view.report_view import build_upload_tab, build_report_list_panel, on_view_summary, on_go_chat
+from hri.view.report_view import build_upload_tab, build_report_list_panel, on_view_summary, on_go_chat, on_report_select, report_list_components
 from hri.view.summary_view import build_summary_tab, summary_components
 from hri.view.chat_view import build_chat_tab, chat_components
 from hri.view.indicator_view import on_compare
@@ -110,6 +110,13 @@ def build_app():
 			fn=on_logout,
 			inputs=state,
 			outputs=[state, login_tab, report_tab, summary_tab, chat_tab, history_tab, admin_tab, logout_btn, tabs, compare_reports]
+		)
+
+		# 보고서 목록 표에서 줄을 누르면 그 보고서를 선택
+		report_list_components["table"].select(
+			fn=on_report_select,
+			inputs=[report_list_components["listed_ids"], state],
+			outputs=[state, report_list_components["message"]]
 		)
 
 		# 요약 보기 버튼 누르면 요약 탭으로

@@ -10,6 +10,7 @@ class ChartExtractError(Exception):
 	"""
 """질의응답 예외 (exception.errors)."""
 
+# 류현수
 class ExternalApiError(Exception):
 	user_message = "데이터를 불러오지 못 했습니다."
 
@@ -17,16 +18,33 @@ class ExternalApiError(Exception):
 		super().__init__(msg or self.user_message)
 		self.user_message = msg or self.user_message
 
+# 서동안
 class InvalidInputError(Exception):
     """빈 질문·공백 입력·최대 길이(1,000자) 초과일 때 validate_question()이 발생시키는 예외."""
 
-
-
+# 임세준
 class LoginFailedError(Exception):
-	"""로그인 실패 (아이디가 없거나 비밀번호가 다를 때)"""
-	pass
+	"""
+	로그인 실패 (아이디가 없거나 비밀번호가 다를 때)
 
+	- login()이 아이디가 없거나 비밀번호가 다르면 raise 한다
+	- on_login()이 except로 받아서 "아이디 또는 비밀번호가 올바르지 않습니다." 를 보여 준다
+	- 보안을 위해 아이디 없음 / 비밀번호 틀림을 나누지 않고 같은 에러로 알린다
+	- Exception을 상속해서 raise / except 를 쓸 수 있고, 추가하는 기능은 없다(pass)
+	"""
+	pass
 
 class DuplicateUserError(Exception):
-	"""회원가입 실패 (이미 사용 중인 아이디일 때)"""
+	"""
+	회원가입 실패 (이미 사용 중인 아이디일 때)
+
+	- register()가 select_user()로 확인해서 같은 아이디가 있으면 raise 한다
+	  (users.user_id는 겹칠 수 없음 = UNIQUE 제약)
+	- on_register()가 except로 받아서 "이미 사용 중인 아이디입니다." 를 보여 준다
+	- Exception을 상속해서 raise / except 를 쓸 수 있고, 추가하는 기능은 없다(pass)
+	"""
 	pass
+
+# 김희진
+class OutputFormatError(Exception):
+	"""LLM 출력이 요구한 형식에 맞지 않아 재시도 후에도 실패했을 때"""
