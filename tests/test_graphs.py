@@ -3,6 +3,7 @@
 [3.8.8] 4개 그래프가 명세대로 연결되어 compile되는지, registry가 한 번만 만드는지 확인한다.
 [3.8.4] 질의응답 그래프의 분기(route_question·route_after_grade)와 체크포인터를 확인한다.
 [3.8.1] 업로드 그래프의 검증 노드(validate_node)·검증 분기(route_after_validate)를 진짜 validate_pdf()와 임시 PDF로 확인한다.
+[3.8.5] 질의응답의 답변 노드(generate·no_answer·error_reply·chat)와 기록 노드(save_log)를 가짜 함수로 확인한다.
 [3.8.6] 요약 그래프의 캐시·섹션 분배(fan_out_sections)·3줄·저장 흐름을 가짜 report_dao·summary_prompt 모듈로 확인한다.
 노드는 아직 가짜({} 반환)라서 입력으로 넣은 값(error·docs·sections 등)으로 분기를 확인한다 (네트워크·DB·LLM 없이 실행).
 route_question이 부르는 get_chat_model은 가짜 모듈로 바꿔 끼운다 (진짜 llm_client는 import할 때 .env가 필요하고 OpenAI를 부름).
@@ -15,6 +16,7 @@ import importlib
 import subprocess
 import sys
 import types
+from datetime import datetime, timedelta
 
 import pymupdf
 import pytest
@@ -22,12 +24,25 @@ from langgraph.graph.state import CompiledStateGraph
 
 from langgraph.checkpoint.memory import InMemorySaver
 
-from hri.domain.schemas import ReportSummary, RouteDecision, Section, SectionSummary, Settings, ThreeLineSummary, ValidationResult
+from langchain_core.messages import AIMessage, HumanMessage
+
+from hri.domain.schemas import ContextDoc, LlmUsage, QALog, ReportSummary, RouteDecision, Section, SectionSummary, Settings, ThreeLineSummary, ValidationResult
 from hri.graph import registry
 from hri.graph.ingest_graph import PARALLEL_EXTRACT, VALIDATE_FAILED_REASON, route_after_validate, validate_node
 from hri.graph.checkpointer import get_checkpointer
 from hri.graph.summary_graph import NO_SECTIONS_ERROR, fan_out_sections, sort_section_summaries
-from hri.graph.qa_graph import GREETING_RE, ROUTE_SYSTEM_PROMPT, route_after_grade, route_question
+from hri.graph.qa_graph import (
+	GREETING_RE,
+	NO_ANSWER_TEXT,
+	ROUTE_SYSTEM_PROMPT,
+	chat_node,
+	error_reply_node,
+	generate_node,
+	no_answer_node,
+	route_after_grade,
+	route_question,
+	save_log_node,
+)
 from hri.graph.visualize import draw_graphs
 
 GETTERS = [registry.get_ingest_graph, registry.get_qa_graph, registry.get_summary_graph, registry.get_agent_graph]
@@ -46,14 +61,23 @@ def clear_graph_cache():
 
 
 class FakeClassifier:
-	"""get_chat_model()이 돌려주는 모델 흉내. with_structured_output(RouteDecision).invoke()가 정해 둔 route를 돌려준다.
+	"""get_chat_model()이 돌려주는 모델 흉내 (진짜 llm_client 대신 끼우는 가짜 모듈의 내용).
 
-	route: LLM이 고를 값 / calls: get_chat_model에 넘긴 인자 / schemas: with_structured_output에 넘긴 양식 / inputs: invoke에 넘긴 메시지
+	- 질문 분류: with_structured_output(RouteDecision).invoke()가 route(정해 둔 값)를 돌려준다
+	- 답변 생성: invoke(messages)가 AIMessage(answer)를 돌려준다 (generate 노드)
+	- 잡담: chat_bot(question)이 chat_answer를 돌려준다 (chat 노드)
+	- 비용: cost_korean_won(usage, usd_to_krw)·get_usd_krw()는 호출을 기록하고 정해 둔 값을 돌려준다
+	기록: calls(get_chat_model 인자) · schemas(구조화 양식) · inputs(분류 입력) · answer_inputs(답변 입력) ·
+	      chat_inputs · cost_calls · usd_calls
 	"""
 
 	def __init__(self, route="chat"):
 		self.route = route
+		self.answer = "LLM 답변"
+		self.chat_answer = "안녕하세요! 무엇을 도와드릴까요?"
+		self.usd_krw = 1400.0
 		self.calls, self.schemas, self.inputs = [], [], []
+		self.answer_inputs, self.chat_inputs, self.cost_calls, self.usd_calls = [], [], [], []
 
 	def get_chat_model(self, **kwargs):
 		self.calls.append(kwargs)
@@ -61,11 +85,30 @@ class FakeClassifier:
 
 	def with_structured_output(self, schema):
 		self.schemas.append(schema)
-		return self
+		fake = self
+
+		class _Structured:
+			def invoke(self, messages):
+				fake.inputs.append(messages)
+				return schema(route=fake.route)
+
+		return _Structured()
 
 	def invoke(self, messages):
-		self.inputs.append(messages)
-		return self.schemas[-1](route=self.route)
+		self.answer_inputs.append(messages)
+		return AIMessage(self.answer)
+
+	def chat_bot(self, question):
+		self.chat_inputs.append(question)
+		return self.chat_answer
+
+	def cost_korean_won(self, usage, usd_to_krw):
+		self.cost_calls.append((usage, usd_to_krw))
+		return 12.5
+
+	def get_usd_krw(self):
+		self.usd_calls.append(True)
+		return self.usd_krw
 
 
 # 진짜 llm_client 대신 가짜 모듈을 끼운다. search 모듈도 가짜 llm_client로 다시 import되게 지운다 (extract_keywords는 진짜 사용)
@@ -73,10 +116,68 @@ class FakeClassifier:
 def fake_llm(monkeypatch):
 	fake = FakeClassifier()
 	module = types.ModuleType("hri.llm.llm_client")
-	module.get_chat_model = fake.get_chat_model
+	for name in ("get_chat_model", "chat_bot", "cost_korean_won", "get_usd_krw"):
+		setattr(module, name, getattr(fake, name))
 	monkeypatch.setitem(sys.modules, "hri.llm.llm_client", module)
 	monkeypatch.delitem(sys.modules, "hri.retriever.search", raising=False)
 	return fake
+
+
+class FakeQaDeps:
+	"""질의응답 노드가 부르는 다른 팀원 함수의 가짜 (아직 레포에 없거나 DB가 필요한 함수).
+
+	- get_context_docs(chunks)   : 김희진 report_dao (3.2.16)  → 청크마다 ContextDoc 1개
+	- build_messages(...)        : 장유빈 rag_prompt (3.3.5)   → 받은 인자를 그대로 담은 메시지 목록
+	- save_qa_log(QALog)         : 임세준 history_service (3.6.2) → log_id 101부터
+	- insert_usage(LlmUsage)     : 임세준 usage_dao (3.6.12)
+	format_docs·has_context(장유빈 rag_prompt)는 레포에 있는 진짜 함수를 쓴다.
+	"""
+
+	def __init__(self):
+		self.context_calls, self.build_calls, self.logs, self.usages = [], [], [], []
+
+	def get_context_docs(self, chunks):
+		self.context_calls.append(chunks)
+		return [ContextDoc(report_id=1, report_title="2026년 경제전망", kind="text", section_title="1. 개요",
+			page_start=1, page_end=2, text=f"근거 {i}") for i, _ in enumerate(chunks)]
+
+	def build_messages(self, question, context, persona, history):
+		self.build_calls.append({"question": question, "context": context, "persona": persona, "history": list(history)})
+		return [{"role": "user", "content": f"{question}\n[자료]\n{context}"}]
+
+	def save_qa_log(self, log):
+		self.logs.append(log)
+		return 100 + len(self.logs)
+
+	def insert_usage(self, usage):
+		self.usages.append(usage)
+		return len(self.usages)
+
+
+@pytest.fixture(autouse=True)
+def qa_deps(monkeypatch):
+	import hri.dao.report_dao as report_dao
+	import hri.dao.usage_dao as usage_dao
+	import hri.prompt.rag_prompt as rag_prompt
+	import hri.service.history_service as history_service
+
+	fake = FakeQaDeps()
+	monkeypatch.setattr(report_dao, "get_context_docs", fake.get_context_docs, raising=False)
+	monkeypatch.setattr(rag_prompt, "build_messages", fake.build_messages, raising=False)
+	monkeypatch.setattr(history_service, "save_qa_log", fake.save_qa_log, raising=False)
+	monkeypatch.setattr(usage_dao, "insert_usage", fake.insert_usage, raising=False)
+	return fake
+
+
+# ask_stream()이 매 턴 넣어 주는 입력(명세서 ask_stream 행의 초기화 목록)을 흉내 낸다
+def qa_input(**overrides):
+	inputs = {
+		"question": "금리 전망은?", "persona": "실무자", "report_ids": [1], "k": 4, "use_mmr": False, "user_id": "tester",
+		"error": None, "docs": [], "context_docs": [], "sources": [], "suggestions": [], "terms": [], "answer": "",
+		"started_at": datetime.now(),
+	}
+	inputs.update(overrides)
+	return inputs
 
 
 # 그래프를 실행하며 실행된 노드 이름을 순서대로 모은다 (stream_mode='updates': 노드가 끝날 때마다 {노드: 바뀐 값})
@@ -290,11 +391,11 @@ def test_validate_node_and_route(document_service, monkeypatch):
 @pytest.mark.parametrize(
 	("inputs", "expected"),
 	[
-		({"question": "금리 전망은?", "docs": ["근거 청크"]},
+		(qa_input(docs=["근거 청크"]),
 		 ["validate", "rewrite", "retrieve", "grade", "generate", {"sources", "suggest"}, "save_log"]),
-		({"question": "금리 전망은?", "docs": []},
+		(qa_input(docs=[]),
 		 ["validate", "rewrite", "retrieve", "grade", "no_answer", "save_log"]),
-		({"question": "", "error": "질문을 입력해 주세요"},
+		(qa_input(question="", error="질문을 입력해 주세요"),
 		 ["validate", "error_reply", "save_log"]),
 	],
 	ids=["근거_있음", "근거_없음", "입력_오류"],
@@ -548,7 +649,7 @@ def test_route_after_grade(state, expected):
 ])
 def test_qa_graph_chat_and_llm_routes(fake_llm, question, llm_route, expected):
 	fake_llm.route = llm_route
-	nodes = run_nodes(registry.get_qa_graph(), {"question": question}, {"configurable": {"thread_id": "s1"}})
+	nodes = run_nodes(registry.get_qa_graph(), qa_input(question=question), {"configurable": {"thread_id": "s1"}})
 	assert nodes == expected
 
 
@@ -562,8 +663,8 @@ def test_checkpointer_is_single_in_memory_saver():
 def test_checkpointer_keeps_state_per_thread():
 	graph = registry.get_qa_graph()
 	a, b = {"configurable": {"thread_id": "session-a"}}, {"configurable": {"thread_id": "session-b"}}
-	graph.invoke({"question": "금리 전망은?", "persona": "입문자"}, a)
-	graph.invoke({"question": "물가 전망은?", "persona": "전문가"}, b)
+	graph.invoke(qa_input(question="금리 전망은?", persona="입문자"), a)
+	graph.invoke(qa_input(question="물가 전망은?", persona="전문가"), b)
 	assert graph.get_state(a).values["persona"] == "입문자"
 	assert graph.get_state(b).values["persona"] == "전문가"
 
@@ -573,10 +674,122 @@ def test_checkpointer_keeps_state_per_thread():
 def test_previous_turn_fields_remain_unless_reset():
 	graph = registry.get_qa_graph()
 	config = {"configurable": {"thread_id": "session-c"}}
-	graph.invoke({"question": "금리 전망은?", "docs": ["1턴 근거"]}, config)
+	graph.invoke(qa_input(question="금리 전망은?", docs=["1턴 근거"]), config)
 
 	not_reset = run_nodes(graph, {"question": "물가 전망은?"}, config)
 	assert "generate" in not_reset
 
 	reset = run_nodes(graph, {"question": "물가 전망은?", "docs": []}, config)
 	assert "no_answer" in reset and "generate" not in reset
+
+
+# ─────────────────────────────────────────────────────────────
+# 6. [3.8.5] 질의응답 답변 노드 · 기록 노드
+# ─────────────────────────────────────────────────────────────
+
+class FakeUsageHandler:
+	"""ask_stream()이 config['configurable']['usage']로 넘기는 UsageMetadataCallbackHandler 흉내 (usage_metadata만 사용)."""
+
+	def __init__(self, usage_metadata):
+		self.usage_metadata = usage_metadata
+
+
+# [확인 34] generate_node: get_context_docs → format_docs → build_messages(질문, [자료], 페르소나, 이전 대화) → LLM
+#           {'answer', 'has_source': True, 'route': 'rag', 'context_docs', 'messages': [이번 질문, 이번 답변]}
+def test_generate_node(fake_llm, qa_deps):
+	history = [HumanMessage("지난 질문"), AIMessage("지난 답변")]
+	state = qa_input(question="금리 전망은?", persona="입문자", docs=["청크A", "청크B"], messages=history)
+
+	result = generate_node(state)
+
+	assert qa_deps.context_calls == [["청크A", "청크B"]]                       # get_context_docs(state['docs'])
+	call = qa_deps.build_calls[0]
+	assert call["question"] == "금리 전망은?" and call["persona"] == "입문자"
+	assert call["context"].startswith("[출처: 2026년 경제전망 p.1-2 / 1. 개요]")  # 진짜 format_docs 결과
+	assert call["history"] == history                                         # 이번 질문은 아직 없는 이전 대화
+	assert fake_llm.calls == [{}]                                             # get_chat_model() 기본값
+	assert result["answer"] == "LLM 답변" and result["has_source"] is True and result["route"] == "rag"
+	assert [d.text for d in result["context_docs"]] == ["근거 0", "근거 1"]
+	assert [(type(m), m.content) for m in result["messages"]] == [(HumanMessage, "금리 전망은?"), (AIMessage, "LLM 답변")]
+
+
+# [확인 35] no_answer·error_reply·chat 노드: 경로별 답변·route·has_source (no_answer·error_reply는 LLM 호출 없음)
+def test_reply_nodes(fake_llm):
+	no_answer = no_answer_node(qa_input(question="환율은?"))
+	assert (no_answer["answer"], no_answer["route"], no_answer["has_source"]) == (NO_ANSWER_TEXT, "no_answer", False)
+	assert NO_ANSWER_TEXT == "자료에 없습니다"
+
+	error = error_reply_node(qa_input(question="", error="질문을 입력해 주세요."))
+	assert (error["answer"], error["route"], error["has_source"]) == ("질문을 입력해 주세요.", "error", False)
+	assert fake_llm.calls == [] and fake_llm.chat_inputs == []
+
+	chat = chat_node(qa_input(question="안녕하세요"))
+	assert (chat["answer"], chat["route"], chat["has_source"]) == (fake_llm.chat_answer, "chat", False)
+	assert fake_llm.chat_inputs == ["안녕하세요"]
+	for result in (no_answer, error, chat):
+		assert [type(m) for m in result["messages"]] == [HumanMessage, AIMessage]
+
+
+# [확인 36] save_log_node: 응답 시간·토큰 합계·원화 비용(cost_korean_won(usage, get_usd_krw()))으로 QALog를 저장하고,
+#           모델마다 LlmUsage(flow='qa', ref_id=log_id)를 저장한 뒤 {'log_id'}를 돌려준다
+def test_save_log_node_with_usage(fake_llm, qa_deps):
+	usage = {
+		"gpt-5-mini-2025-08-07": {"input_tokens": 1200, "output_tokens": 300, "total_tokens": 1500},
+		"gpt-4o-mini": {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120},
+	}
+	state = qa_input(answer="LLM 답변", route="rag", has_source=True, started_at=datetime.now() - timedelta(seconds=2))
+	config = {"configurable": {"thread_id": "session-9", "usage": FakeUsageHandler(usage)}}
+
+	result = save_log_node(state, config)
+
+	log = qa_deps.logs[0]
+	assert isinstance(log, QALog)
+	assert (log.user_id, log.session_id, log.question, log.answer, log.persona) == ("tester", "session-9", "금리 전망은?", "LLM 답변", "실무자")
+	assert (log.route, log.has_source, log.error) == ("rag", True, None)
+	assert 2000 <= log.response_ms < 5000
+	assert log.tokens == 1620 and log.cost_krw == 12.5
+	assert fake_llm.cost_calls == [(usage, 1400.0)] and len(fake_llm.usd_calls) == 1   # 환율은 get_usd_krw()만 사용
+	assert result == {"log_id": 101}
+	assert [(u.flow, u.user_id, u.ref_id, u.model, u.input_tokens, u.output_tokens) for u in qa_deps.usages] == [
+		("qa", "tester", 101, "gpt-5-mini-2025-08-07", 1200, 300),
+		("qa", "tester", 101, "gpt-4o-mini", 100, 20),
+	]
+	assert all(isinstance(u, LlmUsage) for u in qa_deps.usages)
+
+
+# [확인 37] save_log_node: LLM을 쓰지 않은 질문(입력 오류)은 환율을 조회하지 않고 0원·0토큰, 사용량 저장 없음,
+#           qa_logs.error에 안내 문구가 기록된다
+def test_save_log_node_error_without_usage(fake_llm, qa_deps):
+	state = qa_input(question="", error="질문을 입력해 주세요.", answer="질문을 입력해 주세요.", route="error", has_source=False)
+	save_log_node(state, {"configurable": {"thread_id": "s1", "usage": FakeUsageHandler({})}})
+
+	log = qa_deps.logs[0]
+	assert (log.route, log.error, log.tokens, log.cost_krw) == ("error", "질문을 입력해 주세요.", 0, 0.0)
+	assert fake_llm.usd_calls == [] and fake_llm.cost_calls == [] and qa_deps.usages == []
+
+
+# [확인 38] 그래프 전체: 근거 있음 → generate 답변이 state에 남고, save_log가 한 번 실행되어 log_id가 생긴다
+#           같은 thread로 2턴 질문하면 messages가 4개(질문·답변 2쌍) 쌓이고, 2턴 generate는 1턴 대화를 이전 대화로 받는다
+def test_qa_graph_generate_and_log(fake_llm, qa_deps):
+	graph = registry.get_qa_graph()
+	config = {"configurable": {"thread_id": "session-r", "usage": FakeUsageHandler({})}}
+
+	first = graph.invoke(qa_input(question="금리 전망은?", docs=["청크A"]), config)
+	assert (first["answer"], first["route"], first["has_source"], first["log_id"]) == ("LLM 답변", "rag", True, 101)
+
+	second = graph.invoke(qa_input(question="물가 전망은?", docs=["청크B"]), config)
+	assert len(second["messages"]) == 4
+	assert [m.content for m in qa_deps.build_calls[1]["history"]] == ["금리 전망은?", "LLM 답변"]
+	assert [log.route for log in qa_deps.logs] == ["rag", "rag"]
+
+
+# [확인 39] 그래프 전체: 경로별로 save_log에 넘어가는 route·답변 (근거 없음·입력 오류·잡담)
+@pytest.mark.parametrize(("inputs", "route", "answer"), [
+	(qa_input(question="환율은?", docs=[]), "no_answer", NO_ANSWER_TEXT),
+	(qa_input(question="", error="질문을 입력해 주세요."), "error", "질문을 입력해 주세요."),
+	(qa_input(question="안녕하세요"), "chat", "안녕하세요! 무엇을 도와드릴까요?"),
+], ids=["근거_없음", "입력_오류", "잡담"])
+def test_qa_graph_routes_logged(fake_llm, qa_deps, inputs, route, answer):
+	result = registry.get_qa_graph().invoke(inputs, {"configurable": {"thread_id": f"s-{route}"}})
+	assert (result["route"], result["answer"]) == (route, answer)
+	assert [(log.route, log.answer) for log in qa_deps.logs] == [(route, answer)]

@@ -1,9 +1,13 @@
-"""질의응답 흐름 · build_qa_graph, route_question, route_after_grade, generate_node, no_answer_node, error_reply_node, save_log_node (엄정현)
+"""질의응답 흐름 · build_qa_graph, route_question, route_after_grade, generate_node, no_answer_node, error_reply_node, chat_node, save_log_node (엄정현)
 
 [3.8.4] 그래프 구성·분기(build_qa_graph·route_question·route_after_grade)와 체크포인터 연결을 명세대로 채웠다.
-노드 내용은 아직 가짜({} 반환)다. generate·no_answer·error_reply·save_log는 3.8.5에서,
-validate·chat·rewrite·retrieve·grade·sources·suggest는 각 함수(validate_question·chat_bot·rewrite_question·
-hybrid_search·has_context·format_sources·suggest_questions)가 들어오면 연결한다.
+[3.8.5] 답을 만드는 노드(generate·no_answer·error_reply·chat)와 기록 노드(save_log)를 채웠다.
+	- 답을 만드는 노드 4개는 모두 같은 모양으로 돌려준다:
+	  {'answer': 답변, 'has_source': 근거 유무, 'route': 최종 경로, 'messages': [이번 질문, 이번 답변]}
+	  messages는 add_messages 리듀서로 체크포인터의 대화 기록 끝에 붙는다 (다음 질문 때 이전 대화로 쓰임).
+	- save_log는 어느 갈래로 끝나든 마지막에 한 번 실행되어 질문 기록(qa_logs)과 LLM 사용량(llm_usage)을 저장한다.
+나머지 노드(validate·rewrite·retrieve·grade·sources·suggest)는 아직 가짜({} 반환)다.
+각 함수(validate_question·rewrite_question·hybrid_search·format_sources·suggest_questions)가 들어오면 연결한다.
 
 흐름 (LangGraph 워크플로우 명세서 build_qa_graph 행)
 	START → validate → route_question
@@ -16,11 +20,14 @@ compile(checkpointer=get_checkpointer())은 registry.get_qa_graph()가 한 번�
 """
 
 import re
+from datetime import datetime
 from typing import Literal
 
+from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 
-from hri.domain.schemas import QAState, RouteDecision
+from hri.domain.schemas import LlmUsage, QALog, QAState, RouteDecision
 from hri.prompt.rag_prompt import has_context
 
 # 인사·감사·잡담 정규식 (명세서: '인사·감사·잡담 정규식(GREETING_RE)에 걸리면 chat')
@@ -62,29 +69,167 @@ ROUTE_SYSTEM_PROMPT = (
 )
 
 
+# 근거를 찾지 못했을 때의 답변 (명세서 no_answer_node 행·서비스 기능 정의서 '근거 없음 응답': '자료에 없습니다')
+NO_ANSWER_TEXT = "자료에 없습니다"
+
+
 def _skeleton_node(state: QAState) -> dict:
-	"""뼈대용 가짜 노드: state를 바꾸지 않는다. 명세서에 함수 이름이 없는 노드(validate·chat·rewrite·retrieve·grade·sources·suggest)도 이것을 쓴다."""
+	"""뼈대용 가짜 노드: state를 바꾸지 않는다. 아직 함수가 연결되지 않은 노드(validate·rewrite·retrieve·grade·sources·suggest)가 쓴다."""
 	return {}
+
+
+def _reply(state: QAState, answer: str, route: str, has_source: bool) -> dict:
+	"""답을 만드는 노드 4개가 공통으로 돌려주는 state 갱신분을 만든다.
+
+	- answer: 화면에 보여 줄 답변
+	- has_source: 보고서 근거로 답했는지 (generate만 True)
+	- route: 이번 답변의 최종 경로 ('rag' | 'no_answer' | 'chat' | 'error', qa_logs.route와 같은 값)
+	- messages: [HumanMessage(이번 질문), AIMessage(이번 답변)]
+	  QAState.messages는 add_messages 리듀서라 기존 대화 기록 뒤에 이어 붙는다.
+	"""
+	return {
+		"answer": answer,
+		"has_source": has_source,
+		"route": route,
+		"messages": [HumanMessage(state["question"]), AIMessage(answer)],
+	}
 
 
 def generate_node(state: QAState) -> dict:
-	"""[뼈대] 3.8.5에서 구현: get_context_docs → format_docs → build_messages → LLM → {'answer', 'has_source': True, 'route': 'rag', ...}."""
-	return {}
+	"""[답변 노드] 검색된 근거로 LLM 답변을 만든다 (근거가 있을 때만 이 노드로 온다).
+
+	순서 (명세서 generate_node 행)
+	1. get_context_docs(state['docs'])  : 검색된 청크를 답변 근거로 바꾼다
+	   (텍스트 청크 → 그 청크가 속한 섹션 원문, 표·차트 청크 → 원본 표. 김희진 report_dao)
+	2. format_docs(context_docs)        : 근거를 '[출처: 보고서명 p.쪽] 본문' 모양의 [자료] 글로 만든다 (장유빈 rag_prompt)
+	3. build_messages(질문, [자료], 페르소나, 이전 대화) : LLM에 보낼 메시지 목록을 만든다 (장유빈 rag_prompt)
+	   - 이전 대화는 state['messages'](체크포인터에 쌓인 지난 질문·답변)이다. 이번 질문은 아직 들어 있지 않다.
+	4. get_chat_model().invoke(messages) : LLM이 답변을 만든다
+	   - 이 노드 안에서 부르므로 ask_stream()의 stream_mode='messages'로 글자가 실시간으로 화면에 전달된다.
+
+	돌려주는 값: {'answer', 'has_source': True, 'route': 'rag', 'context_docs', 'messages'}
+	함수들은 함수 안에서 import한다 (DB·LLM 모듈을 그래프 파일 import 때 불러오지 않으려고).
+	"""
+	from hri.dao.report_dao import get_context_docs
+	from hri.llm.llm_client import get_chat_model
+	from hri.prompt.rag_prompt import build_messages, format_docs
+
+	context_docs = get_context_docs(state["docs"])
+	context = format_docs(context_docs)
+	messages = build_messages(state["question"], context, state["persona"], state.get("messages") or [])
+	response = get_chat_model().invoke(messages)
+
+	update = _reply(state, response.content, route="rag", has_source=True)
+	update["context_docs"] = context_docs
+	return update
 
 
 def no_answer_node(state: QAState) -> dict:
-	"""[뼈대] 3.8.5에서 구현: LLM 없이 {'answer': '자료에 없습니다', 'has_source': False, 'route': 'no_answer', ...}."""
-	return {}
+	"""[근거 없음 노드] 검색 결과가 없을 때 LLM을 부르지 않고 '자료에 없습니다'로 답한다.
+
+	근거 없이 LLM이 답을 지어내지 않게 하려는 노드다 (서비스 기능 정의서 '근거 없음 응답').
+	돌려주는 값: {'answer': '자료에 없습니다', 'has_source': False, 'route': 'no_answer', 'messages'}
+	"""
+	return _reply(state, NO_ANSWER_TEXT, route="no_answer", has_source=False)
 
 
 def error_reply_node(state: QAState) -> dict:
-	"""[뼈대] 3.8.5에서 구현: LLM 없이 state['error']를 answer로 → {'answer', 'has_source': False, 'route': 'error', ...}."""
-	return {}
+	"""[입력 오류 노드] validate 노드가 적은 안내 문구(state['error'])를 LLM 없이 그대로 답으로 쓴다.
+
+	예) 빈 질문 → '질문을 입력해 주세요.' (validate_question()의 InvalidInputError 문구, 서동안 qa_service)
+	state['error']는 그대로 남아 있어서 save_log가 qa_logs.error에도 기록한다 (대시보드 '최근 에러 로그').
+	돌려주는 값: {'answer': state['error'], 'has_source': False, 'route': 'error', 'messages'}
+	"""
+	return _reply(state, state["error"], route="error", has_source=False)
 
 
-def save_log_node(state: QAState) -> dict:
-	"""[뼈대] 3.8.5에서 구현: 응답 시간·원화 비용 계산 → save_qa_log → insert_usage(flow='qa') → {'log_id'}."""
-	return {}
+def chat_node(state: QAState) -> dict:
+	"""[잡담 노드] 인사·잡담에 chat_bot()으로 짧게 답한다 (검색 없음).
+
+	chat_bot(question)은 서동안 담당(llm_client, WBS 3.7.14)이고, 명세서에 'qa_graph의 chat 노드로 실행'으로 적혀 있다.
+	3.8.5 목록에는 없지만, chat 갈래도 save_log에 route='chat'을 넘겨야 질문 기록이 저장되므로 함께 연결했다.
+	돌려주는 값: {'answer', 'has_source': False, 'route': 'chat', 'messages'}
+	"""
+	from hri.llm.llm_client import chat_bot
+
+	return _reply(state, chat_bot(state["question"]), route="chat", has_source=False)
+
+
+def _total_tokens(usage: dict) -> int:
+	"""모델별 사용량({'모델명': {'input_tokens', 'output_tokens', 'total_tokens'}})의 토큰 수를 모두 더한다.
+
+	total_tokens가 없으면 input_tokens + output_tokens로 계산한다.
+	"""
+	total = 0
+	for tokens in usage.values():
+		total += tokens.get("total_tokens", tokens.get("input_tokens", 0) + tokens.get("output_tokens", 0))
+	return total
+
+
+def save_log_node(state: QAState, config: RunnableConfig) -> dict:
+	"""[기록 노드] 질문 1건의 기록(qa_logs)과 LLM 사용량(llm_usage)을 저장하고 {'log_id'}를 돌려준다.
+
+	어느 갈래(rag·no_answer·chat·error)로 끝나든 마지막에 한 번 실행된다
+	(generate 갈래는 sources·suggest 두 노드가 모두 끝난 뒤).
+
+	순서 (명세서 save_log_node 행)
+	1. 응답 시간: 지금 시각 - state['started_at'](ask_stream이 질문을 받은 시각) → ms
+	2. 토큰·비용: ask_stream()이 config['configurable']['usage']로 넘긴 UsageMetadataCallbackHandler의
+	   usage_metadata(이번 질문에서 쓴 모델별 토큰 수)를 읽는다.
+	   - 원화 비용 = cost_korean_won(usage, get_usd_krw())  (임세준 llm_client)
+	   - get_usd_krw()는 토큰 비용용 환율이다. 토큰 비용 환율은 한국수출입은행으로 확정했으므로
+	     이 노드는 ECOS 환율 함수를 직접 부르지 않는다.
+	   - LLM을 쓰지 않은 질문(근거 없음·입력 오류)은 사용량이 비어 있어 환율을 조회하지 않고 0원으로 둔다.
+	3. save_qa_log(QALog)로 qa_logs에 저장하고 log_id를 받는다 (임세준 history_service)
+	   - error 갈래면 state['error']가 QALog.error에 들어간다.
+	4. 모델마다 insert_usage(LlmUsage(flow='qa', ref_id=log_id, ...))로 llm_usage에 저장한다 (임세준 usage_dao)
+	   - LlmUsage 한 줄에 모델 이름이 하나라서 모델별로 한 줄씩 저장한다.
+
+	config는 LangGraph가 노드에 넘겨주는 실행 설정이다. session_id는 config['configurable']['thread_id']에서 읽는다.
+	"""
+	from hri.dao.usage_dao import insert_usage
+	from hri.llm.llm_client import cost_korean_won, get_usd_krw
+	from hri.service.history_service import save_qa_log
+
+	configurable = config.get("configurable", {})
+
+	# 1) 응답 시간 (ms). TODO(확인 필요): started_at이 없을 때(ask_stream이 넣지 않은 경우) 0으로 기록한다.
+	started_at = state.get("started_at")
+	response_ms = int((datetime.now() - started_at).total_seconds() * 1000) if started_at else 0
+
+	# 2) 토큰·원화 비용. TODO(확인 필요): usage 핸들러가 없으면(ask_stream이 넘기지 않은 경우) 사용량 0으로 기록한다.
+	handler = configurable.get("usage")
+	usage = dict(handler.usage_metadata) if handler is not None else {}
+	cost_krw = cost_korean_won(usage, get_usd_krw()) if usage else 0.0
+
+	# 3) 질문 기록 저장
+	log = QALog(
+		user_id=state["user_id"],
+		session_id=configurable["thread_id"],
+		question=state["question"],
+		answer=state["answer"],
+		persona=state["persona"],
+		route=state["route"],
+		has_source=state["has_source"],
+		response_ms=max(response_ms, 0),
+		tokens=_total_tokens(usage),
+		cost_krw=cost_krw,
+		error=state.get("error"),
+	)
+	log_id = save_qa_log(log)
+
+	# 4) 모델별 LLM 사용량 저장
+	for model, tokens in usage.items():
+		insert_usage(LlmUsage(
+			flow="qa",
+			user_id=state["user_id"],
+			ref_id=log_id,
+			model=model,
+			input_tokens=tokens.get("input_tokens", 0),
+			output_tokens=tokens.get("output_tokens", 0),
+		))
+
+	return {"log_id": log_id}
 
 
 def route_question(state: QAState) -> Literal["chat", "rewrite", "error"]:
@@ -139,7 +284,7 @@ def build_qa_graph() -> StateGraph:
 
 	# 노드 11개
 	graph.add_node("validate", _skeleton_node)
-	graph.add_node("chat", _skeleton_node)
+	graph.add_node("chat", chat_node)
 	graph.add_node("error_reply", error_reply_node)
 	graph.add_node("rewrite", _skeleton_node)
 	graph.add_node("retrieve", _skeleton_node)
