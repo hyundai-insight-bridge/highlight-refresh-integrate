@@ -208,3 +208,17 @@ def test_route_decision_schema_has_description():
 	schema = RouteDecision.model_json_schema()["properties"]["route"]
 	assert schema["enum"] == ["rewrite", "chat"]
 	assert "rewrite" in schema["description"] and "chat" in schema["description"]
+
+
+# [확인 14] QAState.route: 답을 만든 노드가 적는 최종 경로 4개만 허용 (QALog.route·qa_logs.route ENUM과 같은 값)
+def test_qa_route_values_match_qa_logs():
+	hint = typing.get_type_hints(QAState, include_extras=True)["route"]
+	assert set(typing.get_args(hint.__origin__)) == {"rag", "no_answer", "chat", "error"}
+
+
+# [확인 15] 'rewrite'는 라우팅 함수(route_question)의 분기 값일 뿐 state에 저장되지 않는다
+#           → QAState.route에는 없고 RouteDecision.route에만 있어야 한다
+def test_rewrite_only_in_route_decision():
+	qa_hint = typing.get_type_hints(QAState, include_extras=True)["route"]
+	assert "rewrite" not in typing.get_args(qa_hint.__origin__)
+	assert "rewrite" in typing.get_args(RouteDecision.model_fields["route"].annotation)
