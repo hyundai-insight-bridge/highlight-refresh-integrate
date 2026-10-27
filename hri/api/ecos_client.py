@@ -1,71 +1,40 @@
-"""ECOS API · call_ecos, get_ecos_exchange_rate, get_ecos_statistic_table_list, get_ecos_statistic_item_list, get_ecos_statistic_data, get_ecos_statistic_word (류현수)"""
-from __future__ import annotations
+""" external 스키마에 맞추기,  """
 
-import json
-import urllib.error
-import urllib.parse
-import urllib.request
-import httpx
 from datetime import date, timedelta
 
+from ecos import Cycle, EcosClient
+from ecos.exceptions import EcosResponseError
+from ecos.models import StatisticRow
+
 from hri.config.settings import load_settings
-from hri.domain.schemas.external import EcosExchangeRate
-from hri.exception.errors import ExternalApiError
+from hri.domain.schemas.external import EcosExchangeRate, EcosQuery, Indicator
 
-BASE_URL = "https://ecos.bok.or.kr/api"
+EXCHANGE_STAT_CODE = "731Y001"
+CURRENCY_ITEM_CODES = {"USD": "0000001", "JPY(100엔)": "0000002", "EUR": "0000003"}
 
-def call_ecos(service: str, *params: str, start: int = 1, end: int = 100, timeout=10) -> dict:
-    # key load
-    key = load_settings().ecos_api_key
-    if not key:
-        raise ExternalApiError("ECOS_API_KEY가 설정되지 않았습니다.")
+client = EcosClient(load_settings.ecos_api_key)
 
-    # 요청 인자 (서미스명, 인증키, 요청유형, 언어구분, 요청시작건수, 요청종료 건수)
-    # ref: https://ecos.bok.or.kr/api/#/DevGuide/DevSpeciflcation
-    parts = [service, key, "json", "kr", str(start), str(end)]
-    parts += [urllib.parse.quote(str(p)) for p in params]
-    url = BASE_URL + "/" + "/".join(parts)
+# 특정 날짜의 환율을 조회
+date_formatter = lambda x: str(x).replace("-", "")
+today = date.today()
+for r in client.search("731Y001", Cycle.DAILY, date_formatter(today), date_formatter(today), end_num=10):
+    print(f"  {r.time} | {r.item_name1:<25} | {r.data_value} {r.unit_name}")
 
-    # api 요청 후 에러 종류 별 처리
-    try:
-        res = httpx.get(url, timeout=timeout)
-        res.raise_for_status()
-        body = res.json()
-    except httpx.HTTPStatusError as e:
-        raise ExternalApiError(f"ECOS 호출 실패(HTTP {e.response.status_code})")
-    except httpx.TimeoutException:
-        raise ExternalApiError(f"ECOS 연결 실패(Timeout, {timeout}sec)")
-    except httpx.RequestError as e:
-        raise ExternalApiError(f"ECOS 연결 실패({type(e).__name__})")
-    except ValueError:
-        raise ExternalApiError("ECOS 응답을 해석하지 못했습니다.")
+# 특정 단어의 의미를 조회
+for w in client.search_word("GDP"):
+    content = w.content.replace("\n", " ")
+    print(f"  {w.word}: {content}...")
 
-    # 결과 반환
-    if "RESULT" in body:
-        code = body["RESULT"].get("CODE", "")
-        if code=="INFO-200":    # 정상응답
-            return {"row": []}
+# 통계표 목록 조회
+print("="*50)
+print(client.list_tables())
 
-        # ECOS에서 오류 응답이 온 경우
-        raise ExternalApiError(f"ECOS 오류 {code}: {body['RESULT'].get('MESSAGE', '')}")
-    
-    return body.get(service, {"row": []})
+# 통계 항목 조회
+print("="*50)
+print(client.list_items("901Y054"))
 
-def get_ecos_exchange_rate(currency: str = "USD") -> EcosExchangeRate:
-    cur = currency.upper()
-    item, 
+# 통계 데이터 조회(연간)
+print("="*50)
+print(client.search("901Y054", Cycle.ANNUAL, "2022", "2023"))
 
-def get_ecos_statistic_table_list():
-    res = call_ecos("StatisticTableList")
-    print(res)
-    return res
-
-def get_ecos_statistic_item_list():
-    pass
-    
-
-def get_ecos_statistic_data():
-    pass
-
-def get_ecos_statistic_word():
-    pass
+print(client.list_items("731Y001"))
