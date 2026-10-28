@@ -2,7 +2,7 @@
 
 - 진짜 업로드 그래프 대신 '정해진 순서로 노드 결과를 내보내는 가짜 그래프'를 끼워 넣는다.
 - 가짜 그래프 안에서 가짜 채팅 모델을 호출해 토큰 사용량(UsageMetadataCallbackHandler)도 흉내 낸다.
-- insert_usage(), cost_korean_won()은 호출 기록만 남기는 가짜로 바꾼다.
+- insert_usage(LlmUsage), cost_korean_won(usage, usd_to_krw), get_usd_krw()는 호출 기록만 남기는 가짜로 바꾼다.
 
 실행: poetry run pytest tests/test_upload_report.py -v
 """
@@ -50,35 +50,51 @@ class FakeGraph:
             yield {node: state}
 
 
+META = {"title": "2026 경제전망", "publisher": "현대경제연구원", "published_date": "2026-07-31"}
+
+# warnings는 실제 그래프처럼 persist가 아니라 추출 노드들이 각자 쌓는다 (operator.add 리듀서).
+# persist는 {'report_id', 'counts'}만 돌려준다.
 SUCCESS_STEPS = [
-    ("validate", {"ok": True}),
-    ("load_text", {}),
+    ("validate", {"error": None}),
+    ("load_text", {"meta": META, "pages": ["p1", "p2", "p3"], "warnings": ["p.2 스캔본 의심"]}),
     ("extract_tables", {}),
-    ("process_charts", {}),
+    ("process_charts", {"warnings": ["p.14 차트 수치 검토 필요"]}),
     ("split", {}),
     ("summarize_tables", {}),
-    ("persist", {"report_id": 12, "counts": {"text": 157, "table": 8, "chart": 3},
-                 "warnings": ["p.14 차트 수치 검토 필요"]}),
+    ("persist", {"report_id": 12, "counts": {"text": 157, "table": 8, "chart": 3}}),
 ]
 
-VALIDATE_FAIL_STEPS = [("validate", {"ok": False, "reason": "PDF가 아닙니다"})]
+# 실제 validate_node는 실패하면 {'error': reason}을 돌려준다 (통과하면 {'error': None}).
+VALIDATE_FAIL_STEPS = [("validate", {"error": "PDF가 아닙니다"})]
 
 
 @pytest.fixture
 def env(monkeypatch):
-    """document_service가 import하는 3개 모듈을 가짜로 바꾸고, 새로 import한 모듈을 돌려준다."""
-    state = {"graph": None, "usage_calls": []}
+    """document_service가 import하는 3개 모듈을 가짜로 바꾸고, 새로 import한 모듈을 돌려준다.
+
+    - hri.graph.registry : 가짜 그래프를 돌려줌
+    - hri.llm.llm_client : cost_korean_won(usage, usd_to_krw)·get_usd_krw() 가짜 (환율 API 호출 없음)
+    - hri.dao.usage_dao  : insert_usage(usage: LlmUsage) 가짜. 받은 LlmUsage를 usage_calls에 쌓는다.
+      state['insert_fails']가 True면 DB 오류를 흉내 내 예외를 낸다.
+    """
+    state = {"graph": None, "usage_calls": [], "insert_fails": False}
 
     registry = types.ModuleType("hri.graph.registry")
     registry.get_ingest_graph = lambda: state["graph"]
 
-    metrics = types.ModuleType("hri.util.metrics")
-    metrics.cost_korean_won = lambda usage, *a, **k: 1.23
+    llm_client = types.ModuleType("hri.llm.llm_client")
+    llm_client.get_usd_krw = lambda: 1400.0
+    llm_client.cost_korean_won = lambda usage, usd_to_krw: 1.23
+
+    def fake_insert_usage(usage):
+        if state["insert_fails"]:
+            raise RuntimeError("DB 연결 실패")
+        state["usage_calls"].append(usage)
 
     usage_dao = types.ModuleType("hri.dao.usage_dao")
-    usage_dao.insert_usage = lambda **kw: state["usage_calls"].append(kw)
+    usage_dao.insert_usage = fake_insert_usage
 
-    for name, mod in [("hri.graph.registry", registry), ("hri.util.metrics", metrics),
+    for name, mod in [("hri.graph.registry", registry), ("hri.llm.llm_client", llm_client),
                       ("hri.dao.usage_dao", usage_dao)]:
         monkeypatch.setitem(sys.modules, name, mod)
     monkeypatch.delitem(sys.modules, MODULE, raising=False)
@@ -114,16 +130,33 @@ def test_마지막_항목에_결과가_있음(env):
     last = run(env, FakeGraph(SUCCESS_STEPS))[-1]
     assert last["report_id"] == 12
     assert last["counts"] == {"text": 157, "table": 8, "chart": 3}
-    assert last["warnings"] == ["p.14 차트 수치 검토 필요"]
 
 
-def test_성공하면_사용량을_한번_기록(env):
+def test_모든_노드의_warnings를_모아서_알림(env):
+    last = run(env, FakeGraph(SUCCESS_STEPS))[-1]
+    assert last["warnings"] == ["p.2 스캔본 의심", "p.14 차트 수치 검토 필요"]
+
+
+def test_결과에_메타데이터와_쪽수를_담음(env):
+    last = run(env, FakeGraph(SUCCESS_STEPS))[-1]
+    assert last["meta"] == META
+    assert last["page_count"] == 3
+
+
+def test_성공하면_모델별로_사용량을_기록(env):
     run(env, FakeGraph(SUCCESS_STEPS, llm_at=["summarize_tables", "process_charts"]))
-    assert len(env["usage_calls"]) == 1
-    call = env["usage_calls"][0]
-    assert call["flow"] == "ingest" and call["ref_id"] == 12
-    assert call["usage"]["gpt-4o-mini"]["input_tokens"] == 200      # 100 + 100 (2번 호출 합계)
-    assert call["cost_krw"] == 1.23
+    assert len(env["usage_calls"]) == 1                       # 모델이 gpt-4o-mini 하나뿐이라 한 줄
+    usage = env["usage_calls"][0]
+    assert usage.flow == "ingest" and usage.ref_id == 12 and usage.user_id == "user01"
+    assert usage.model == "gpt-4o-mini"
+    assert usage.input_tokens == 200 and usage.output_tokens == 40   # 100 + 100, 20 + 20 (2번 호출 합계)
+    assert usage.cost_krw == 1.23
+
+
+def test_사용량_기록이_실패해도_업로드_결과는_정상(env):
+    env["insert_fails"] = True
+    out = run(env, FakeGraph(SUCCESS_STEPS, llm_at=["process_charts"]))   # 예외가 밖으로 나오면 실패
+    assert out[-1]["type"] == "result" and out[-1]["report_id"] == 12
 
 
 # ─────────────────────────────────────────────────────────────
@@ -133,6 +166,7 @@ def test_검증_실패해도_에러없이_끝나고_결과를_알림(env):
     out = run(env, FakeGraph(VALIDATE_FAIL_STEPS))          # 예외가 밖으로 나오면 실패
     assert out, "아무것도 내보내지 않았습니다"
     assert "report_id" not in out[-1], "실패인데 report_id가 있습니다"
+    assert out[-1] == {"type": "error", "reason": "PDF가 아닙니다"}   # validate의 사유를 그대로 전달
 
 
 def test_중간_노드_예외도_에러없이_끝나고_결과를_알림(env):
@@ -143,9 +177,17 @@ def test_중간_노드_예외도_에러없이_끝나고_결과를_알림(env):
 def test_실패해도_쓴_AI_비용은_기록(env):
     run(env, FakeGraph(SUCCESS_STEPS, llm_at=["process_charts"], raise_at="split"))
     assert len(env["usage_calls"]) == 1, "AI를 썼는데 비용이 기록되지 않았습니다"
-    assert env["usage_calls"][0]["ref_id"] is None
+    usage = env["usage_calls"][0]
+    assert usage.ref_id is None                    # 저장 전에 실패해 report_id가 없다
+    assert usage.flow == "ingest" and usage.user_id == "user01"
 
 
-def test_AI를_안_썼으면_기록하지_않음_또는_0원(env):
+def test_AI를_안_썼으면_기록하지_않음(env):
     run(env, FakeGraph(VALIDATE_FAIL_STEPS))
-    assert all(c.get("usage") for c in env["usage_calls"]), "빈 사용량을 기록했습니다"
+    assert env["usage_calls"] == [], "AI를 안 썼는데 사용량을 기록했습니다"
+
+
+def test_persist가_report_id를_못_돌려주면_성공으로_보지_않음(env):
+    steps = SUCCESS_STEPS[:-1] + [("persist", {})]     # 노드가 아직 뼈대({})인 경우
+    last = run(env, FakeGraph(steps))[-1]
+    assert last["type"] == "error"
