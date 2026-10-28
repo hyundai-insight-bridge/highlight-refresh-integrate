@@ -49,11 +49,18 @@ def table_to_markdown(rows: list[list[str | None]]) -> str:
 		|---|---|
 		| 2025 | 2.1 |
 	- 셀 정리는 _clean_cell() (None은 빈칸, 줄바꿈은 공백, '|'는 '\\|')
+	- 열 개수 맞추기 (머리글 열 수 기준, 셀을 지우지 않음)
+	  · 머리글보다 칸이 적은 행 → 모자란 칸을 빈칸으로 채운다
+	  · 머리글보다 칸이 많은 행 → 넘치는 칸을 지우지 않고 머리글 쪽에 빈 칸을 늘린다 (경고는 validate_table)
+	  pdfplumber 표는 행마다 칸 수가 같아 이 경우가 없다 (HRI·타사 45편 표 444개 확인).
+	  chart_to_markdown()·build_compare_table() 등 다른 곳에서 만든 rows가 들어와도 표가 깨지거나 값이 사라지지 않게 한다
 	- rows가 비어 있으면 "" (만들 표가 없음)
 	"""
 	if not rows:
 		return ""
-	header, *body = [[_clean_cell(cell) for cell in row] for row in rows]
+	cleaned = [[_clean_cell(cell) for cell in row] for row in rows]
+	width = max(len(row) for row in cleaned)
+	header, *body = [row + [""] * (width - len(row)) for row in cleaned]
 	lines = [_markdown_row(header), "|" + "|".join(["---"] * len(header)) + "|"]
 	lines += [_markdown_row(row) for row in body]
 	return "\n".join(lines)
@@ -184,6 +191,8 @@ def validate_table(rows: list[list[str | None]]) -> str:
 	- 빈 셀      : 칸은 있지만 글자가 없음 (""). pdfplumber는 글자가 없는 칸을 ""로 돌려준다
 	  (공백만 있는 칸은 따로 보지 않음: HRI·타사 보고서 45편의 표 칸 13,035개 중 0개)
 	- 병합 의심 셀: None. pdfplumber는 여러 칸이 하나로 합쳐진 자리(병합 칸)를 None으로 돌려준다
+	- 머리글보다 열이 많은 행: 넘치는 칸은 이름 없는 열이 된다 (table_to_markdown이 지우지 않고 남김).
+	  머리글보다 열이 적은 행은 table_to_markdown이 빈칸으로 채우므로 경고하지 않는다
 	- 좌표는 사람이 읽기 쉽게 1부터 센다 (쪽 번호와 같음). (1, 2) = 1행(머리글) 2열
 	- 이상이 있으면 '⚠️'로 시작하는 경고. 표 노드는 '✅'로 시작하지 않으면 warnings에 '쪽·캡션·경고'를 넣고 표는 그대로 저장한다
 
@@ -192,14 +201,18 @@ def validate_table(rows: list[list[str | None]]) -> str:
 	"""
 	empty = []
 	merged = []
+	wide = []
+	header_cols = len(rows[0]) if rows else 0
 	for row_no, row in enumerate(rows, start=1):
+		if len(row) > header_cols:
+			wide.append((row_no, len(row)))
 		for col_no, cell in enumerate(row, start=1):
 			if cell is None:
 				merged.append((row_no, col_no))
 			elif cell == "":
 				empty.append((row_no, col_no))
 
-	if not empty and not merged:
+	if not empty and not merged and not wide:
 		return TABLE_OK
 
 	parts = []
@@ -207,4 +220,7 @@ def validate_table(rows: list[list[str | None]]) -> str:
 		parts.append(f"빈 셀 {len(empty)}개: {_cells_to_text(empty)}")
 	if merged:
 		parts.append(f"병합 의심 셀 {len(merged)}개: {_cells_to_text(merged)}")
+	if wide:
+		rows_text = ", ".join(f"{row_no}행({cols}열)" for row_no, cols in wide)
+		parts.append(f"머리글({header_cols}열)보다 열이 많은 행 {len(wide)}개: {rows_text}")
 	return "⚠️ " + " / ".join(parts)
