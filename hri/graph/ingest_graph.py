@@ -1,11 +1,17 @@
-"""보고서 업로드 흐름 · build_ingest_graph, validate_node, route_after_validate, load_text_node, extract_tables_node, process_charts_node, split_node, summarize_tables_node, persist_node (엄정현)
+"""보고서 업로드 흐름 · build_ingest_graph, validate_node, route_after_validate, load_text_node, extract_tables_node, extract_charts_node, process_charts_node, split_node, summarize_tables_node, persist_node (엄정현)
 
 [3.8.1] 그래프 구성(build_ingest_graph)·검증 노드(validate_node)·검증 분기(route_after_validate)를 명세대로 채웠다.
 [3.8.3] 분할(split_node)·표 요약(summarize_tables_node)·저장(persist_node) 노드를 명세대로 채웠다.
 	- split: 본문을 섹션(부모)과 검색용 청크(자식)로 나누고, 표·차트도 청크로 만든다
 	- summarize_tables: 표·차트마다 1~2문장 요약을 만들어 표·차트 청크의 검색용 글(캡션+요약)로 넣는다
 	- persist: DB(MySQL)와 벡터DB(Chroma)에 한 번에 저장한다. 중간에 실패하면 모두 되돌린다(rollback)
-추출 노드(load_text·extract_tables·extract_charts·process_charts)는 아직 가짜({} 반환)다. 3.8.2에서 채운다.
+[3.8.2] 추출 노드(load_text·extract_tables·extract_charts·process_charts)를 명세대로 채웠다.
+	- load_text: PDF에서 글자를 쪽마다 뽑아 정리하고(머리말·꼬리말·목차 제거), 제목·발행기관·발행일을 찾는다
+	- extract_tables: PDF의 표를 행·열 그대로 뽑아 검수하고, 큰 표는 나눠 마크다운 표로 만든다
+	- extract_charts: PDF의 차트 영역을 PNG 그림으로 잘라 낸다
+	- process_charts: 차트 그림을 글자 인식(OCR) + Vision LLM으로 표 데이터로 바꾼다 (실패한 차트는 경고만 남기고 건너뜀)
+모든 노드는 state 전체가 아니라 '바뀐 키만' dict로 돌려준다. tables·warnings는 operator.add 리듀서라
+여러 노드가 동시에 돌려준 목록이 하나로 합쳐진다 (예: 표 노드의 표 + 차트 노드의 차트 표).
 
 흐름 (LangGraph 워크플로우 명세서 build_ingest_graph 행)
 	START → validate → route_after_validate
@@ -19,9 +25,11 @@ compile은 registry.get_ingest_graph()가 한 번만 한다.
 import logging
 from collections import Counter
 
+from langchain_core.runnables import RunnableConfig, RunnableLambda
+
 from langgraph.graph import END, START, StateGraph
 
-from hri.domain.schemas import Chunk, IngestState, Report, Section, Table
+from hri.domain.schemas import ChartImage, Chunk, IngestState, OcrToken, Report, Section, Table
 
 logger = logging.getLogger(__name__)
 
@@ -32,11 +40,6 @@ PARALLEL_EXTRACT = ["load_text", "extract_tables", "extract_charts"]
 #   명세서에는 'reason을 state['error']에 기록'만 있고, reason이 없을 때의 문구는 정해져 있지 않다.
 #   지금 validate_pdf()는 실패할 때 항상 reason을 채우므로 대비용이다. 문구가 정해지면 이 값만 바꾼다.
 VALIDATE_FAILED_REASON = "PDF 파일을 확인할 수 없습니다"
-
-
-def _skeleton_node(state: IngestState) -> dict:
-	"""뼈대용 가짜 노드: state를 바꾸지 않는다. 명세서에 함수 이름이 없는 extract_charts 노드가 쓴다 (3.8.2에서 교체)."""
-	return {}
 
 
 def validate_node(state: IngestState) -> dict:
@@ -58,19 +61,176 @@ def validate_node(state: IngestState) -> dict:
 	return {"error": None}
 
 
+# ── 추출 노드에서 쓰는 값 ─────────────────────────────────────────────────────────
+# TODO(확인 필요): 스캔본·빈 쪽 경고 문구. 명세서에는 'is_scanned 페이지 경고는 warnings에 기록'만 있고 문구는 없다.
+SCANNED_PAGE_WARNING = "{page}쪽은 글자가 없는 쪽(스캔본·빈 쪽)이라 내용을 읽지 못했습니다"
+
+# validate_table()이 이상이 없을 때 돌려주는 글의 시작 (명세서 validate_table 행: "'✅ 이상 없음' 또는 경고를 반환")
+TABLE_OK_MARK = "✅"
+
+# TODO(확인 필요): 표 검수 경고 문구. 명세서에는 '경고는 warnings'만 있어서, 어느 쪽 어느 표인지 앞에 붙인다.
+TABLE_WARNING = "{page}쪽 표 {caption}: {result}"
+
+# Vision 호출을 동시에 몇 개까지 보낼지 (명세서 process_charts_node 행: config={'max_concurrency': 4})
+CHART_MAX_CONCURRENCY = 4
+
+
 def load_text_node(state: IngestState) -> dict:
-	"""[뼈대] 3.8.2에서 구현: load_pdf → clean_text → find_body_start → {'pages', 'meta', 'warnings'}."""
-	return {}
+	"""[텍스트 노드] PDF의 글자를 쪽마다 뽑아 정리하고, 보고서 정보(제목 등)를 찾는다.
+
+	순서 (명세서 load_text_node 행, 함수는 모두 엄정현 pdf_loader)
+	1. load_pdf(file_path)     : 쪽마다 글자를 뽑는다. 글자가 없는 쪽은 is_scanned=True로 표시된다
+	2. clean_text(pages)       : 여러 쪽에 반복되는 머리말·꼬리말, 쪽 번호, 깨진 글자를 지운다
+	3. extract_report_meta(file_path, 정리한 pages) : 제목·발행기관·발행일 dict를 만든다 (persist가 reports에 저장)
+	   - 표지(첫 쪽)에서 제목·날짜를 찾으므로, 표지를 잘라 내기 전(find_body_start 전)의 pages를 넘긴다
+	4. find_body_start(pages)  : 표지·목차를 잘라 내고 본문 시작 쪽부터 남긴다 → split 노드의 입력
+	5. 스캔본·빈 쪽마다 경고 1줄을 warnings에 넣는다 (업로드 결과 화면에 표시)
+
+	돌려주는 값: {'pages': 본문 쪽 목록, 'meta': {title, publisher, published_date}, 'warnings': [...]}
+	함수는 함수 안에서 import한다 (그래프 파일을 import할 때 PDF 라이브러리를 불러오지 않으려고).
+	"""
+	from hri.loader.pdf_loader import clean_text, extract_report_meta, find_body_start, load_pdf
+
+	file_path = state["file_path"]
+	raw_pages = load_pdf(file_path)
+	cleaned = clean_text(raw_pages)
+	meta = extract_report_meta(file_path, cleaned)
+	body_pages = find_body_start(cleaned)
+
+	warnings = [SCANNED_PAGE_WARNING.format(page=page.page) for page in raw_pages if page.is_scanned]
+	return {"pages": body_pages, "meta": meta, "warnings": warnings}
+
+
+def _piece_caption(caption: str | None, index: int, total: int) -> str | None:
+	"""큰 표를 나눈 조각의 캡션. 나눴으면 '(1/3)'처럼 몇 번째 조각인지 붙인다 (Table.caption 설명: '(1/n)'을 붙임)."""
+	if total == 1:
+		return caption
+	mark = f"({index}/{total})"
+	return f"{caption} {mark}" if caption else mark
 
 
 def extract_tables_node(state: IngestState) -> dict:
-	"""[뼈대] 3.8.2에서 구현: extract_tables → validate_table → split_big_table → table_to_markdown → {'tables', 'warnings'}."""
-	return {}
+	"""[표 노드] PDF의 표를 뽑아 검수하고, 마크다운 표(Table)로 만들어 {'tables', 'warnings'}로 돌려준다.
+
+	순서 (명세서 extract_tables_node 행, 함수는 모두 엄정현 table_loader)
+	1. extract_tables(file_path)          : pdfplumber로 표를 행·열 그대로(rows) 뽑는다. 쪽 번호·캡션('[표 n]')도 함께
+	2. validate_table(rows)               : 빈 칸·병합 의심 칸을 찾아 '✅ 이상 없음' 또는 경고 글을 돌려준다
+	   - '✅'로 시작하지 않으면 경고로 보고 warnings에 '쪽·캡션·경고'를 넣는다 (표는 그대로 저장)
+	3. split_big_table(rows)              : 행이 많은 표(기본 10행 초과)를 머리글을 붙인 여러 조각으로 나눈다
+	4. 조각마다 table_to_markdown(rows)   : 마크다운 표 글로 바꾸고 Table 1개를 만든다
+	   - 조각이 여러 개면 캡션에 '(1/n)'을 붙이고, 조각마다 새 Table을 만들어 doc_id(원본 표 번호)가 겹치지 않게 한다
+	     (report.py Table 설명: 'model_copy()로 만들면 doc_id가 복사되므로 새로 만들 것')
+
+	돌려주는 값: {'tables': [Table, ...], 'warnings': [...]}
+	tables·warnings는 operator.add 리듀서라 차트 노드가 돌려준 차트 표·경고와 합쳐진다.
+	"""
+	from hri.loader.table_loader import extract_tables, split_big_table, table_to_markdown, validate_table
+
+	tables: list[Table] = []
+	warnings: list[str] = []
+
+	for table in extract_tables(state["file_path"]):
+		# 2) 검수: 이상이 있으면 경고만 남기고 표는 계속 처리한다
+		result = validate_table(table.rows)
+		if not result.startswith(TABLE_OK_MARK):
+			warnings.append(TABLE_WARNING.format(page=table.page, caption=table.caption or "(캡션 없음)", result=result))
+
+		# 3)·4) 나누고 조각마다 마크다운 표 1개
+		pieces = split_big_table(table.rows)
+		for index, rows in enumerate(pieces, start=1):
+			tables.append(Table(
+				page=table.page,
+				caption=_piece_caption(table.caption, index, len(pieces)),
+				rows=rows,
+				markdown=table_to_markdown(rows),
+				source_type="table",
+			))
+
+	return {"tables": tables, "warnings": warnings}
 
 
-def process_charts_node(state: IngestState) -> dict:
-	"""[뼈대] 3.8.2에서 구현: state['charts']마다 ocr_chart → chart_to_table … → {'tables', 'warnings'}."""
-	return {}
+def extract_charts_node(state: IngestState) -> dict:
+	"""[차트 자르기 노드] PDF에서 차트 영역을 찾아 PNG 그림으로 잘라 {'charts': [ChartImage, ...]}로 돌려준다.
+
+	extract_charts(file_path) (엄정현 chart_loader): 그림·도형 영역 중 작은 것(120pt 미만)과 반복 로고를 빼고,
+	캡션('[그림 n]')을 찾아 data/charts/raw/에 PNG로 저장한다.
+	명세서는 'extract_charts 노드가 state['charts']에 넣은 차트'라고만 하고 함수 이름이 없어
+	다른 노드처럼 '*_node'로 이름을 붙였다. 3.8.2 목록에는 없지만 process_charts의 입력을 만드는 노드라 함께 연결했다.
+	"""
+	from hri.loader.chart_loader import extract_charts
+
+	return {"charts": extract_charts(state["file_path"])}
+
+
+def _chart_to_table(item: tuple[ChartImage, list[OcrToken]]) -> Table:
+	"""차트 1개를 표(Table)로 바꾼다: chart_to_table → validate_chart → chart_to_markdown (엄정현 chart_loader).
+
+	- chart_to_table(chart, tokens) : Vision LLM이 차트 그림과 OCR 글자를 보고 표 데이터(ChartData)로 복원한다.
+	  실패하면 ChartExtractError를 낸다.
+	- validate_chart(data, tokens)  : 값 개수·OCR 글자와 맞는 비율로 신뢰도를 매기고, 의심되면 needs_review=True
+	- chart_to_markdown(data, chart): Table(source_type='chart')로 바꾼다 → 이후 표와 같은 길로 요약·저장된다
+	process_charts_node가 RunnableLambda로 감싸 여러 차트를 동시에 처리한다.
+	"""
+	from hri.loader.chart_loader import chart_to_markdown, chart_to_table, validate_chart
+
+	chart, tokens = item
+	data = validate_chart(chart_to_table(chart, tokens), tokens)
+	return chart_to_markdown(data, chart)
+
+
+def process_charts_node(state: IngestState, config: RunnableConfig) -> dict:
+	"""[차트 노드] 잘라 낸 차트 그림을 표(Table)로 바꿔 {'tables', 'warnings'}로 돌려준다.
+
+	순서 (명세서 process_charts_node 행)
+	0. 차트가 0개면 아무것도 하지 않고 바로 빈 결과를 돌려준다
+	1. ocr_chart(image_path) 를 차트마다 **하나씩 차례로** 실행해 그림 속 글자(OcrToken)를 읽는다 (엄정현 chart_loader)
+	   - EasyOCR은 한 번 만든 Reader를 함께 쓰고 CPU 계산이라, 동시에 돌려도 빨라지지 않고 충돌할 수 있어서 순서대로 한다
+	2. chart_to_table → validate_chart → chart_to_markdown 을 RunnableLambda 하나로 묶어
+	   .batch(..., config={'max_concurrency': 4}, return_exceptions=True) 로 **동시에 최대 4개씩** 처리한다
+	   - 오래 걸리는 Vision LLM 호출만 병렬로 돌려 시간을 줄인다
+	   - return_exceptions=True: 차트 하나가 실패해도 전체가 멈추지 않고, 그 자리에 예외가 결과로 들어온다
+	3. 실패한 차트(OCR 실패 포함)는 오류 내용(ChartExtractError 메시지)을 warnings에 넣고 건너뛴다
+	   - ChartExtractError가 아닌 예상 밖 오류도 건너뛰되, 원인 확인을 위해 로그를 남긴다
+	4. 성공한 차트 표는 {'tables': [...]}로 돌려줘 표 노드의 표와 합쳐진다 (operator.add)
+
+	config는 LangGraph가 넘겨주는 실행 설정이다. batch에 그대로 이어 주어
+	업로드 사용량 집계(callbacks)가 Vision 호출에도 적용되게 한다.
+	"""
+	charts: list[ChartImage] = state.get("charts") or []
+	if not charts:
+		return {"tables": [], "warnings": []}
+
+	from hri.exception.errors import ChartExtractError
+	from hri.loader.chart_loader import ocr_chart
+
+	warnings: list[str] = []
+
+	# 1) OCR은 차례로 (실패한 차트는 경고만 남기고 다음 단계에서 뺀다)
+	items: list[tuple[ChartImage, list[OcrToken]]] = []
+	for chart in charts:
+		try:
+			items.append((chart, ocr_chart(chart.image_path)))
+		except ChartExtractError as error:
+			warnings.append(str(error))
+
+	# 2) Vision 구조화·검수·표 변환은 동시에 최대 4개
+	results = RunnableLambda(_chart_to_table).batch(
+		items,
+		config={**config, "max_concurrency": CHART_MAX_CONCURRENCY},
+		return_exceptions=True,
+	)
+
+	# 3)·4) 성공한 표만 모으고, 실패는 경고로
+	tables: list[Table] = []
+	for (chart, _tokens), result in zip(items, results):
+		if isinstance(result, Exception):
+			if not isinstance(result, ChartExtractError):
+				logger.error("%s쪽 차트 처리 중 예상 밖 오류", chart.page, exc_info=result)
+			warnings.append(str(result))
+			continue
+		tables.append(result)
+
+	return {"tables": tables, "warnings": warnings}
 
 
 # ── 명세서에 정해지지 않은 값 (정해지면 아래 값만 바꾼다) ─────────────────────────────
@@ -275,7 +435,7 @@ def build_ingest_graph() -> StateGraph:
 	graph.add_node("validate", validate_node)
 	graph.add_node("load_text", load_text_node)
 	graph.add_node("extract_tables", extract_tables_node)
-	graph.add_node("extract_charts", _skeleton_node)
+	graph.add_node("extract_charts", extract_charts_node)
 	graph.add_node("process_charts", process_charts_node)
 	graph.add_node("split", split_node)
 	graph.add_node("summarize_tables", summarize_tables_node)

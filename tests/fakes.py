@@ -171,3 +171,133 @@ def install_ingest_store(monkeypatch, store: FakeIngestStore, chunk_size: int = 
 	for name in ("add_chunks", "delete_report_vectors"):
 		monkeypatch.setattr(chroma_store, name, getattr(store, name))
 	return store
+
+
+# ─────────────────────────────────────────────────────────────
+# 업로드 추출 노드(3.8.2)용 가짜: 아직 레포에 없는 표·차트·보고서 정보 함수
+# ─────────────────────────────────────────────────────────────
+class FakeExtractors:
+	"""load_text·extract_tables·extract_charts·process_charts·summarize_tables 노드가 부르는 함수 중
+	아직 레포에 없는 것(엄정현 3.2.7·3.2.10~3.2.15)의 가짜. 부른 순서·인자를 기록한다.
+
+	- tables      : extract_tables()가 돌려줄 표 목록 (rows만 채운 Table)
+	- charts      : extract_charts()가 돌려줄 ChartImage 목록
+	- ocr_fail    : ocr_chart()가 ChartExtractError를 낼 차트의 image_path 집합
+	- vision_fail : chart_to_table()이 ChartExtractError를 낼 차트의 image_path 집합
+	- vision_crash: chart_to_table()이 예상 밖 오류(ValueError)를 낼 차트의 image_path 집합
+	- vision_delay: chart_to_table() 1번에 걸리는 시간(초). 동시 실행 개수(peak)를 재려고 쓴다
+	- meta        : extract_report_meta()가 돌려줄 dict
+
+	가짜 규칙 (명세서 설명을 줄여 흉내 냄)
+	- validate_table : 빈 칸("")이 있으면 '⚠️ 빈 칸 n개', 없으면 '✅ 이상 없음'
+	- split_big_table: 머리글(첫 행)을 조각마다 붙이고 본문을 max_rows(기본 10)행씩 나눔
+	- table_to_markdown: '| a | b |' 줄을 이어 붙임
+	- chart_to_markdown: Table(source_type='chart', caption=차트 캡션)
+	"""
+
+	def __init__(self, tables=None, charts=None, ocr_fail=(), vision_fail=(), vision_crash=(), vision_delay=0.0, meta=None):
+		import threading
+
+		self.tables = list(tables or [])
+		self.charts = list(charts or [])
+		self.ocr_fail = set(ocr_fail)
+		self.vision_fail = set(vision_fail)
+		self.vision_crash = set(vision_crash)
+		self.vision_delay = vision_delay
+		self.meta = meta or {"title": "테스트 보고서", "publisher": "현대경제연구원", "published_date": None}
+		self.calls: list = []          # (함수 이름, 주요 인자) 순서대로
+		self.ocr_order: list = []      # ocr_chart를 부른 image_path 순서
+		self.running = 0               # 지금 실행 중인 chart_to_table 개수
+		self.peak = 0                  # 동시에 실행된 chart_to_table 최대 개수
+		self._lock = threading.Lock()
+
+	# pdf_loader
+	def extract_report_meta(self, file_path, pages):
+		self.calls.append(("extract_report_meta", file_path, [p.page for p in pages]))
+		return dict(self.meta)
+
+	# table_loader
+	def extract_tables(self, file_path):
+		self.calls.append(("extract_tables", file_path))
+		return list(self.tables)
+
+	def validate_table(self, rows):
+		blanks = sum(cell == "" for row in rows for cell in row)
+		return f"⚠️ 빈 칸 {blanks}개" if blanks else "✅ 이상 없음"
+
+	def split_big_table(self, rows, max_rows=10):
+		header, body = rows[0], rows[1:]
+		if len(body) <= max_rows:
+			return [rows]
+		return [[header] + body[i:i + max_rows] for i in range(0, len(body), max_rows)]
+
+	def table_to_markdown(self, rows):
+		return "\n".join("| " + " | ".join(row) + " |" for row in rows)
+
+	def summarize_tables(self, tables):
+		self.calls.append(("summarize_tables", len(tables)))
+		return [t.model_copy(update={"summary": f"{t.caption} 요약"}) for t in tables]
+
+	# chart_loader
+	def extract_charts(self, file_path):
+		self.calls.append(("extract_charts", file_path))
+		return list(self.charts)
+
+	def ocr_chart(self, image_path):
+		from hri.domain.schemas import OcrToken
+		from hri.exception.errors import ChartExtractError
+
+		self.ocr_order.append(image_path)
+		if image_path in self.ocr_fail:
+			raise ChartExtractError(f"{image_path}: OCR 실패")
+		return [OcrToken(text="2.0", bbox=(0, 0, 10, 10), conf=0.9, is_number=True)]
+
+	def chart_to_table(self, chart, tokens):
+		import time
+
+		from hri.domain.schemas import ChartData, ChartSeries
+		from hri.exception.errors import ChartExtractError
+
+		with self._lock:
+			self.running += 1
+			self.peak = max(self.peak, self.running)
+		try:
+			time.sleep(self.vision_delay)
+			if chart.image_path in self.vision_fail:
+				raise ChartExtractError(f"{chart.page}쪽 차트: Vision 응답을 ChartData로 바꾸지 못함")
+			if chart.image_path in self.vision_crash:
+				raise ValueError(f"{chart.page}쪽 차트: 예상 밖 오류")
+			return ChartData(chart_type="bar", x_labels=["2025"], series=[ChartSeries(name="성장률", values=[2.0])])
+		finally:
+			with self._lock:
+				self.running -= 1
+
+	def validate_chart(self, data, tokens):
+		return data.model_copy(update={"confidence": 1.0})
+
+	def chart_to_markdown(self, data, chart):
+		from hri.domain.schemas import Table
+
+		return Table(page=chart.page, caption=chart.caption, markdown="| x | 성장률 |\n|---|---|\n| 2025 | 2.0 |",
+			source_type="chart", image_path=chart.image_path, confidence=data.confidence)
+
+
+def install_extract_stubs(monkeypatch, extractors: FakeExtractors) -> FakeExtractors:
+	"""아직 레포에 없는 추출 함수를 진짜 모듈 자리에 끼운다 (raising=False: 함수가 없어도 끼움).
+
+	- hri.loader.pdf_loader.extract_report_meta (3.2.12)
+	- hri.loader.table_loader: extract_tables·validate_table·split_big_table·table_to_markdown·summarize_tables (3.2.7·3.2.10·3.2.11)
+	- hri.loader.chart_loader: extract_charts·ocr_chart·chart_to_table·validate_chart·chart_to_markdown (3.2.13~3.2.15)
+	load_pdf·clean_text·find_body_start는 레포에 있으므로 진짜를 쓴다.
+	함수가 레포에 들어오면 이 가짜 대신 진짜로 테스트하도록 바꾼다.
+	"""
+	import hri.loader.chart_loader as chart_loader
+	import hri.loader.pdf_loader as pdf_loader
+	import hri.loader.table_loader as table_loader
+
+	monkeypatch.setattr(pdf_loader, "extract_report_meta", extractors.extract_report_meta, raising=False)
+	for name in ("extract_tables", "validate_table", "split_big_table", "table_to_markdown", "summarize_tables"):
+		monkeypatch.setattr(table_loader, name, getattr(extractors, name), raising=False)
+	for name in ("extract_charts", "ocr_chart", "chart_to_table", "validate_chart", "chart_to_markdown"):
+		monkeypatch.setattr(chart_loader, name, getattr(extractors, name), raising=False)
+	return extractors
