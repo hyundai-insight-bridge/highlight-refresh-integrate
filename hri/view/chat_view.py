@@ -3,8 +3,10 @@ import logging
 
 import gradio as gr
 
-from hri.domain.schemas import AnswerResult
+from hri.domain.schemas import AnswerResult, TermCard
+from hri.exception.errors import ExternalApiError, InvalidInputError, OutputFormatError
 from hri.service.report_service import search_reports
+from hri.service.term_service import MAX_TERM_LENGTH, explain_term
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +84,7 @@ def build_chat_tab():
 	- 왼쪽 반(챗봇): 맨 위에 페르소나(입문자/실무자/전문가)·보고서 선택(여러 개 가능)·검색 옵션(k, MMR),
 	  그 아래에 대화창(gr.Chatbot)·질문 입력칸·전송 버튼·출처·추천 질문 버튼 3개.
 	- 오른쪽 반(용어 검색): 눌러서 접고 펼치는 '용어 검색' 메뉴(gr.Accordion). 안의 검색 창은
-	  build_term_panel(류현수)이 들어오면 이 메뉴 안에서 부른다.
+	  build_term_panel(류현수)이 만든다.
 	추천 질문·👍/👎 버튼은 숨겨 두고, 답변이 끝난 뒤 respond_stream()이 추천 질문 버튼을 보여 준다.
 	피드백 버튼은 on_feedback(임세준)이 연결될 때 보이게 한다.
 	탭은 로그인 전에는 숨겨 둔 채(visible=False) 만들고, 로그인하면 on_login이 보이게 한다.
@@ -119,8 +121,8 @@ def build_chat_tab():
 			# 오른쪽 반: 용어 검색 (접고 펼치는 메뉴)
 			with gr.Column(scale=1):
 				with gr.Accordion("용어 검색", open=False) as term_menu:
-					# build_term_panel(류현수)이 들어오면 이 안에서 부르고, 아래 안내 문구는 지운다
-					gr.Markdown("용어 검색 기능을 준비 중입니다.")
+					# 용어 검색 창 (류현수). 페르소나를 같이 써서 질문 답변과 같은 난이도로 설명한다
+					build_term_panel(persona)
 
 	chat_components.update(
 		tab=tab,
@@ -216,3 +218,71 @@ def connect_chat_events(state: gr.State) -> None:
 	c["message"].submit(respond_stream, inputs=stream_inputs, outputs=stream_outputs)
 	c["send_btn"].click(respond_stream, inputs=stream_inputs, outputs=stream_outputs)
 	c["tab"].select(refresh_report_choices, inputs=[state, c["report_dropdown"]], outputs=c["report_dropdown"])
+
+
+# ---------------------------------------------------------------------
+# [류현수] 용어 검색 · build_term_panel, on_term_click
+# ---------------------------------------------------------------------
+TERM_NOT_FOUND_MESSAGE = "ECOS 통계용어 사전에서 '{term}'을(를) 찾지 못했습니다. 다른 표현(예: 약어·정식 명칭)으로 검색해 보세요."
+TERM_API_ERROR_MESSAGE = "ECOS 통계용어를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요."
+TERM_FAILED_MESSAGE = "용어 설명을 만들지 못했습니다. 잠시 후 다시 시도해 주세요."
+
+# 용어 검색 창 컴포넌트 모음 (chat_components와 같은 방식). term_input, term_btn, term_result
+term_components = {}
+
+
+def build_term_panel(persona: gr.Radio):
+	"""용어 검색 창을 만든다. (build_chat_tab의 '용어 검색' 메뉴 안에서 호출)
+
+	용어 입력칸·'풀이 보기' 버튼·결과(Markdown)를 두고, 버튼 클릭과 Enter를 on_term_click에 연결한다.
+	state가 필요 없어서 이벤트 연결도 여기서 한다 (connect_chat_events에 넣지 않는다).
+
+	입력: persona — 질의응답 탭의 페르소나 gr.Radio. 질문 답변과 같은 난이도로 용어를 설명한다
+	반환: 없음 (컴포넌트는 term_components로 꺼내 쓴다)
+	"""
+	term_input = gr.Textbox(
+		label="용어",
+		placeholder="예: GDP, 경상수지, 기준금리",
+		max_length=MAX_TERM_LENGTH,
+		lines=1,
+	)
+	term_btn = gr.Button("풀이 보기", variant="primary")
+	term_result = gr.Markdown()
+
+	inputs = [term_input, persona]
+	term_btn.click(on_term_click, inputs=inputs, outputs=term_result)
+	term_input.submit(on_term_click, inputs=inputs, outputs=term_result)
+	term_components.update(term_input=term_input, term_btn=term_btn, term_result=term_result)
+
+
+def _term_card_to_markdown(card: TermCard) -> str:
+	"""TermCard를 화면에 보여 줄 Markdown으로 바꾼다. (쉬운 설명 먼저, 원문 정의는 인용으로)"""
+	definition = "\n> ".join(card.definition.splitlines())
+	return (
+		f"#### {card.term}\n\n"
+		f"{card.explanation}\n\n"
+		f"**원문 정의** ({card.source})\n\n"
+		f"> {definition}"
+	)
+
+
+def on_term_click(term: str, persona: str | None = DEFAULT_PERSONA) -> str:
+	"""'풀이 보기' 버튼: explain_term()으로 용어 풀이를 만들어 결과 Markdown을 돌려준다.
+
+	- 찾으면 쉬운 설명 + 원문 정의(출처)
+	- ECOS 통계용어에 없으면 다른 표현으로 검색해 보라는 안내
+	- 입력 오류·ECOS 오류·LLM 오류는 안내 문구로 보여 준다 (자세한 API 오류 내용은 보이지 않고 로그에만 남긴다)
+	"""
+	try:
+		card = explain_term(term, persona or DEFAULT_PERSONA)
+	except InvalidInputError as e:
+		return f"⚠️ {e}"
+	except ExternalApiError:
+		logger.exception("용어 풀이 중 ECOS 오류")
+		return f"⚠️ {TERM_API_ERROR_MESSAGE}"
+	except OutputFormatError:
+		logger.exception("용어 풀이 중 LLM 출력 오류")
+		return f"⚠️ {TERM_FAILED_MESSAGE}"
+	if card is None:
+		return f"ℹ️ {TERM_NOT_FOUND_MESSAGE.format(term=(term or '').strip())}"
+	return _term_card_to_markdown(card)
