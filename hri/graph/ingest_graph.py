@@ -81,8 +81,9 @@ def load_text_node(state: IngestState) -> dict:
 	순서 (명세서 load_text_node 행, 함수는 모두 엄정현 pdf_loader)
 	1. load_pdf(file_path)     : 쪽마다 글자를 뽑는다. 글자가 없는 쪽은 is_scanned=True로 표시된다
 	2. clean_text(pages)       : 여러 쪽에 반복되는 머리말·꼬리말, 쪽 번호, 깨진 글자를 지운다
-	3. extract_report_meta(file_path, 정리한 pages) : 제목·발행기관·발행일 dict를 만든다 (persist가 reports에 저장)
+	3. extract_report_meta(file_path, 정제 전 pages) : 제목·발행기관·발행일 dict를 만든다 (persist가 reports에 저장)
 	   - 표지(첫 쪽)에서 제목·날짜를 찾으므로, 표지를 잘라 내기 전(find_body_start 전)의 pages를 넘긴다
+	   - clean_text()는 본문 머리말과 같은 표지 제목 줄도 지우므로 load_pdf() 결과(raw_pages)를 넘긴다
 	4. find_body_start(pages)  : 표지·목차를 잘라 내고 본문 시작 쪽부터 남긴다 → split 노드의 입력
 	5. 스캔본·빈 쪽마다 경고 1줄을 warnings에 넣는다 (업로드 결과 화면에 표시)
 
@@ -94,7 +95,7 @@ def load_text_node(state: IngestState) -> dict:
 	file_path = state["file_path"]
 	raw_pages = load_pdf(file_path)
 	cleaned = clean_text(raw_pages)
-	meta = extract_report_meta(file_path, cleaned)
+	meta = extract_report_meta(file_path, raw_pages)
 	body_pages = find_body_start(cleaned)
 
 	warnings = [SCANNED_PAGE_WARNING.format(page=page.page) for page in raw_pages if page.is_scanned]
