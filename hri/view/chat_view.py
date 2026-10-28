@@ -75,6 +75,41 @@ def _suggest_updates(suggestions: list[str]) -> list:
 	return updates
 
 
+
+# ---------------------------------------------------------------------
+# [류현수] 추천 질문 · build_suggest_buttons, on_suggest_click
+# ---------------------------------------------------------------------
+# 대화를 처음 시작할 때 보여 줄 질문 (임시. 서비스가 완성되면 기능을 잘 보여 주는 질문으로 바꾼다)
+STARTER_QUESTIONS = [
+	"이 보고서의 핵심 내용을 요약해 줘",
+	"보고서에서 전망한 경제성장률은 얼마야?",
+	"물가와 금리 전망은 어떻게 돼?",
+]
+
+
+def build_suggest_buttons(message: gr.Textbox) -> list[gr.Button]:
+	"""추천 질문 버튼 MAX_SUGGESTIONS개를 만든다. (build_chat_tab 안에서 질문 입력칸 다음에 호출)
+
+	처음에는 STARTER_QUESTIONS를 보여 주고, 버튼을 누르면 on_suggest_click으로 질문 입력칸(message)에 그 질문을 넣는다.
+	답변이 끝난 뒤 respond_stream()이 버튼 글자를 후속 질문으로 바꿔도 같은 클릭 연결을 그대로 쓴다
+	(state가 필요 없어서 연결도 여기서 한다).
+
+	반환: 버튼 목록 (chat_components['suggest_buttons'])
+	"""
+	buttons = []
+	for i in range(MAX_SUGGESTIONS):
+		question = STARTER_QUESTIONS[i] if i < len(STARTER_QUESTIONS) else ""
+		button = gr.Button(value=question, visible=bool(question), size="sm")
+		# 버튼을 입력으로 넘기면 버튼에 적힌 글자(질문)가 on_suggest_click에 들어온다
+		button.click(on_suggest_click, inputs=button, outputs=message)
+		buttons.append(button)
+	return buttons
+
+
+def on_suggest_click(question: str) -> str:
+	"""추천 질문 버튼: 누른 질문을 질문 입력칸에 넣는다. (바로 보내지 않고, 사용자가 고쳐서 보낼 수 있게 한다)"""
+	return (question or "").strip()
+
 def build_chat_tab():
 	"""질의응답 탭 화면을 만든다. (gr.Blocks의 gr.Tabs 안에서 호출)
 
@@ -83,7 +118,9 @@ def build_chat_tab():
 	  그 아래에 대화창(gr.Chatbot)·질문 입력칸·전송 버튼·출처·추천 질문 버튼 3개.
 	- 오른쪽 반(용어 검색): 눌러서 접고 펼치는 '용어 검색' 메뉴(gr.Accordion). 안의 검색 창은
 	  build_term_panel(류현수)이 들어오면 이 메뉴 안에서 부른다.
-	추천 질문·👍/👎 버튼은 숨겨 두고, 답변이 끝난 뒤 respond_stream()이 추천 질문 버튼을 보여 준다.
+	추천 질문 버튼은 처음에 시작 질문 3개를 보여 주고(build_suggest_buttons, 류현수), 답변이 끝난 뒤
+	respond_stream()이 후속 질문으로 바꾼다. 버튼을 누르면 질문 입력칸에 그 질문이 들어간다(on_suggest_click).
+	👍/👎 버튼은 숨겨 둔다.
 	피드백 버튼은 on_feedback(임세준)이 연결될 때 보이게 한다.
 	탭은 로그인 전에는 숨겨 둔 채(visible=False) 만들고, 로그인하면 on_login이 보이게 한다.
 	이벤트 연결은 gr.State가 필요해서 build_app()이 connect_chat_events(state)로 한다.
@@ -110,8 +147,8 @@ def build_chat_tab():
 					)
 					send_btn = gr.Button("전송", variant="primary", scale=1)
 				sources = gr.Markdown()
-				# 추천 질문: 처음에는 숨기고 답변이 끝나면 질문이 있는 만큼 보여 준다
-				suggest_buttons = [gr.Button(value="", visible=False) for _ in range(MAX_SUGGESTIONS)]
+				# 추천 질문: 처음에는 시작 질문(STARTER_QUESTIONS, 류현수)을 보여 주고, 답변이 끝나면 후속 질문으로 바꾼다
+				suggest_buttons = build_suggest_buttons(message)
 				# 피드백: on_feedback(임세준)이 연결될 때 보이게 한다 (2차)
 				with gr.Row():
 					like_btn = gr.Button("👍", visible=False, scale=0)
