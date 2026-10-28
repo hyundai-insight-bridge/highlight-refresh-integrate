@@ -224,6 +224,10 @@ def test_build_and_connect_do_not_raise():
 	assert tab.id == "chat"
 	assert tab.visible is False
 	components = chat_view.chat_components
-	assert len(components["suggest_buttons"]) == 3 and len(components["term_buttons"]) == 3
+	assert len(components["suggest_buttons"]) == 3
 	assert components["persona"].value == "실무자"
 	assert components["report_dropdown"].multiselect is True
+	# 용어 검색은 처음에 접혀 있는 메뉴로 오른쪽 반에 둔다
+	assert isinstance(components["term_menu"], gr.Accordion)
+	assert components["term_menu"].open is False
+	assert "term_buttons" not in components and "term_card" not in components
