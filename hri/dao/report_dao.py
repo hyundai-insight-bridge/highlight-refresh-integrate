@@ -266,3 +266,29 @@ def get_context_docs(chunks: list[Chunk]) -> list[ContextDoc]:
 				needs_review=bool(table["needs_review"]),
 			))
 	return docs
+
+# insert_tables (엄정현)
+def insert_tables(conn: Connection, report_id: int, tables: list[Table]) -> int:
+	"""
+	report_tables 테이블에 표·차트 원본을 executemany()로 한 번에 INSERT하고 넣은 개수를 돌려준다.
+	persist_node가 연 커넥션을 받아 쓴다. commit, rollback은 호출부가 한다 (한 트랜잭션).
+	insert_chunks()보다 먼저 호출해야 한다 (chunks.doc_id가 report_tables.doc_id를 참조).
+	markdown(원본 표)은 답변용, summary(1~2문장)는 검색용이며 doc_id로 표·차트 청크와 이어진다.
+	split 단계의 Table.report_id는 None이므로 인자로 받은 report_id를 쓰고, Table.confidence는 ocr_confidence 칸에 넣는다.
+	rows(행 목록)는 DB 칸이 없어 저장하지 않는다. 빈 목록이면 0.
+	"""
+	if not tables:
+		return 0
+	sql = (
+		"INSERT INTO report_tables (doc_id, report_id, page, caption, markdown, summary, source_type, image_path, ocr_confidence, needs_review) "
+		"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+	)
+	rows = [
+		(t.doc_id, report_id, t.page, t.caption, t.markdown, t.summary, t.source_type, t.image_path, t.confidence, t.needs_review)
+		for t in tables
+	]
+
+	with conn.cursor() as cur:
+		cur.executemany(sql, rows)
+
+	return len(rows)
