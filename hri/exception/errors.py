@@ -20,7 +20,17 @@ class ExternalApiError(Exception):
 
 # 서동안
 class InvalidInputError(Exception):
-    """빈 질문·공백 입력·최대 길이(1,000자) 초과일 때 validate_question()이 발생시키는 예외."""
+	"""
+	질문 입력 오류 (빈 질문·공백만 입력·최대 길이 1,000자 초과)
+
+	- validate_question()이 사용자에게 보여 줄 안내 문구를 담아 raise 한다
+	  예) raise InvalidInputError("질문을 입력해 주세요.")
+	- qa_graph의 validate 노드가 except로 받아 state['error']에 str(예외)를 넣고,
+	  route_question → error_reply 노드가 그 문구를 답변으로 돌려준다 (화면까지 예외가 올라가지 않음)
+	- save_log가 같은 문구를 qa_logs.error에 기록한다 (대시보드 '최근 에러 로그')
+	- Exception을 상속해서 raise / except 를 쓸 수 있고, 추가하는 기능은 없다(pass)
+	"""
+	pass
 
 # 임세준
 class LoginFailedError(Exception):
