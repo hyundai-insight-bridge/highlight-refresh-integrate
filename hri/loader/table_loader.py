@@ -60,10 +60,10 @@ def table_to_markdown(rows: list[list[str | None]]) -> str:
 
 
 def split_big_table(
-	rows: list[list[str]] | None,
+	rows: list[list[str | None]],
 	max_rows: int = MAX_TABLE_ROWS,
 	header_rows: int = 1,
-) -> list[list[list[str]]]:
+) -> list[list[list[str | None]]]:
 	"""본문이 max_rows행을 넘는 표를 max_rows행씩 나누고, 모든 조각 맨 앞에 머리글을 붙인다.
 
 	명세서 split_big_table 행 그대로 (header_rows=1, 기본값)
