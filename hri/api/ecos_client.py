@@ -45,7 +45,7 @@ def _to_float(raw: str) -> float | None:
 
 # schemas/external에 정의된 Indicator를 StatisticRow와 연결함
 def to_indicators(rows: list[StatisticRow], name: str) -> list[Indicator]:
-	"""name은 EcosChoice.name(INDICATOR_CODES)임. row.time 형식(2026Q2·202607·2025)은 Indicator.period와 동일함."""
+	"""name은 비교할 보고서 지표 이름(Indicator.name)임. row.time 형식(2026Q2·202607·2025)은 Indicator.period와 동일함."""
 	out = []
 	for r in rows:
 		value = _to_float(r.data_value)
@@ -95,4 +95,4 @@ def lookup_term(word: str, client: EcosClient | None = None) -> dict | None:
 	if not words:
 		return None
 	hit = next((w for w in words if w.word.strip() == word), words[0])
-	return {"term": hit.word, "definition": hit.content.strip(), "source": "ECOS 통계용어"}
+	return {"term": hit.word, "definition": hit.content.strip(), "source": "ECOS 통계용어"}
