@@ -2,12 +2,17 @@
 
 관리자 계정에만 보이는 대시보드 화면.
 - get_dashboard_data(): 대시보드 1차 숫자를 모아 화면 형식(마크다운 표)으로 가공 (3.7.8)
+- build_admin_tab(): 사용 현황·답변 품질·성능 비용·문서 관리·운영 상태 화면과 새로고침 버튼 배치 (3.7.9)
+- on_refresh(): 새로고침 버튼을 누르면 get_dashboard_data() 결과로 화면을 갱신 (3.7.9)
 """
+import gradio as gr
+
 from hri.dao.dashboard_dao import select_perf_cost, select_recent_errors, select_source_ratio, select_top_questions
 from hri.domain.schemas import DashboardData
 from hri.llm.llm_client import cost_korean_won, get_usd_krw
 from hri.loader.table_loader import table_to_markdown
 from hri.service.report_service import search_reports
+from hri.util.logger import safe_call
 
 
 def get_dashboard_data() -> DashboardData:
@@ -111,4 +116,85 @@ def get_dashboard_data() -> DashboardData:
 		cost_krw=cost_krw,
 		reports=table_to_markdown(report_rows),
 		recent_errors=table_to_markdown(error_rows)
+	)
+
+
+def build_admin_tab():
+	"""
+	관리자 대시보드 화면 만들기
+
+	사용 현황·답변 품질·성능 비용·문서 관리·운영 상태를
+	gr.Markdown(표)·gr.Image(차트)로 구성하고 새로고침 gr.Button을 둔다.
+
+	- 관리자 계정에만 보이도록 처음에는 숨겨 둔다 (visible=False, 관리자가 로그인하면 on_login이 보이게 함)
+	- 새로고침 버튼은 state가 필요 없어서 여기서 바로 on_refresh()와 연결한다
+	- 차트(gr.Image)는 자리만 두고, 값은 2차(일별 질문 수)에서 채운다
+	- 차트가 없으면 빈 이미지 칸 대신 '표시할 데이터가 없습니다' 안내 문구를 보여 준다
+	  (1차에는 차트가 없어서 이미지 칸은 숨기고 안내 문구만 보임)
+
+	입력: 없음
+	출력: gr.Tab (관리자 탭)
+	"""
+	with gr.Tab("관리자", id="admin", visible=False) as admin_tab:
+		refresh_btn = gr.Button("새로고침", variant="primary")
+
+		# 사용 현황
+		gr.Markdown("### 사용 현황")
+		top_questions = gr.Markdown()
+		daily_chart = gr.Image(label="일별 질문 수", interactive=False, visible=False)
+		
+		# 답변 품질
+		gr.Markdown("### 답변 품질")
+		source_ratio = gr.Markdown()
+
+		# 성능·비용
+		gr.Markdown("### 성능·비용")
+		perf_cost = gr.Markdown()
+		usage_by_flow = gr.Markdown()
+
+		# 문서 관리
+		gr.Markdown("### 문서 관리")
+		reports = gr.Markdown()
+
+		# 운영 상태
+		gr.Markdown("### 운영 상태")
+		recent_errors = gr.Markdown()
+
+	# 새로고침 버튼 누르면 대시보드 갱신
+	refresh_btn.click(
+		fn=on_refresh,
+		outputs=[top_questions, source_ratio, perf_cost, usage_by_flow, reports, recent_errors]
+	)
+
+	return admin_tab
+
+
+@safe_call
+def on_refresh():
+	"""
+	새로고침 버튼 눌렀을 때
+
+	get_dashboard_data() 결과로 대시보드 컴포넌트를 갱신한다.
+
+	- 표(질문 TOP 10·flow별 토큰·보고서 목록·최근 에러)는 마크다운 표 그대로 보여 준다
+	- 자료 유무 응답 비율은 %로, 평균 응답 시간은 ms로, 원화 비용 합계는 원으로 보여 준다
+	- 돌려주는 값 6개는 build_admin_tab()의 outputs 순서와 같아야 한다
+	  [질문 TOP 10, 자료 유무 비율, 응답 시간·원화 비용, flow별 토큰, 보고서 목록, 최근 에러]
+
+	입력: 없음
+	출력: tuple (값 6개)
+	"""
+	data = get_dashboard_data()
+
+	# 숫자는 단위를 붙여서 보여줌
+	source_ratio = f"'자료에 없습니다' 응답 비율: **{round(data.source_ratio * 100, 1)}%**"
+	perf_cost = f"평균 응답 시간: **{data.avg_response_ms} ms** / 원화 비용 합계: **{round(data.cost_krw, 2)}원**"
+
+	return (
+		data.top_questions,
+		source_ratio,
+		perf_cost,
+		data.usage_by_flow,
+		data.reports,
+		data.recent_errors
 	)
