@@ -20,7 +20,8 @@ report_list_components = {}
 def build_report_list_panel():
 	"""보고서 목록·검색 화면을 만든다. (gr.Blocks 안에서 호출)
 
-	검색어 입력칸·검색 버튼·보고서 표를 두고, 표에서 한 줄을 누르면 그 보고서를 선택한다.
+	검색어 입력칸·검색 버튼과, 눌러서 펼치는 '보고서 목록' 메뉴(보고서 표)를 둔다.
+	메뉴를 펼치거나 검색하면 목록을 불러오고, 표에서 한 줄을 누르면 그 보고서를 선택한다.
 	선택한 보고서의 report_id는 state['report_ids']에 담겨 요약·질의응답 탭으로 넘어간다.
 
 	반환: (화면 Column, '요약 보기' 버튼, '질의응답으로 이동' 버튼)
@@ -35,14 +36,18 @@ def build_report_list_panel():
 				scale=4,
 			)
 			search_btn = gr.Button("검색", variant="primary", scale=1)
-		table = gr.Dataframe(
-			headers=TABLE_HEADERS,
-			datatype=["str", "str", "str", "number"],
-			value=[],
-			interactive=False,
-			wrap=True,
-		)
-		message = gr.Markdown()
+
+		# 눌러서 펼치는 보고서 목록 (처음에는 접혀 있음)
+		with gr.Accordion("보고서 목록 (눌러서 펼치기)", open=False) as list_menu:
+			table = gr.Dataframe(
+				headers=TABLE_HEADERS,
+				datatype=["str", "str", "str", "number"],
+				value=[],
+				interactive=False,
+				wrap=True,
+			)
+			message = gr.Markdown()
+
 		with gr.Row():
 			go_summary_btn = gr.Button("요약 보기")
 			go_chat_btn = gr.Button("질의응답으로 이동")
@@ -50,8 +55,16 @@ def build_report_list_panel():
 		# 표의 각 줄이 어떤 report_id인지 기억해 두는 값 (표에는 report_id 열이 없다)
 		listed_ids = gr.State([])
 
-	search_btn.click(on_report_search, inputs=keyword, outputs=[table, listed_ids, message])
-	keyword.submit(on_report_search, inputs=keyword, outputs=[table, listed_ids, message])
+	outputs = [table, listed_ids, message]
+	# 메뉴를 펼칠 때 목록을 불러온다 (검색어가 비어 있으면 전체 목록)
+	list_menu.expand(on_report_search, inputs=keyword, outputs=outputs)
+	# 검색하면 결과를 채우고, 접혀 있으면 메뉴를 펼쳐서 보여 준다
+	search_btn.click(on_report_search, inputs=keyword, outputs=outputs).then(
+		lambda: gr.update(open=True), outputs=list_menu
+	)
+	keyword.submit(on_report_search, inputs=keyword, outputs=outputs).then(
+		lambda: gr.update(open=True), outputs=list_menu
+	)
 	report_list_components.update(table=table, listed_ids=listed_ids, message=message)
 	return panel, go_summary_btn, go_chat_btn
 
