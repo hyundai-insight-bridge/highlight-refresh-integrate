@@ -16,7 +16,6 @@ PERSONA_CHOICES = ["입문자", "실무자", "전문가"]
 DEFAULT_PERSONA = "실무자"
 DEFAULT_K = 4
 MAX_SUGGESTIONS = 3  # 추천 질문 버튼 개수
-MAX_TERMS = 3  # 용어 버튼 개수
 NEED_LOGIN_MESSAGE = "로그인 후 이용해 주세요."
 ERROR_MESSAGE = "답변을 만드는 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요."
 
