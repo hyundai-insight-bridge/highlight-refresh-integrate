@@ -13,6 +13,7 @@ NEED_REQUEST_MESSAGE = "요청 내용을 입력하세요."
 SUMMARY_FAIL_MESSAGE = "요약을 만들지 못했습니다."
 SUMMARY_ERROR_MESSAGE = "요약 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요."
 REQUEST_ERROR_MESSAGE = "요청을 처리하지 못했습니다."
+EMPTY_ANSWER_MESSAGE = "요청을 처리했지만 표시할 답변이 없습니다."
 
 # app.py, 다른 담당자가 컴포넌트를 꺼내 쓸때 쓰는 모음 (login_components 등과 같은 방식)
 summary_components = {}
@@ -41,7 +42,7 @@ def _report_titles() -> dict[int, str]:
         return {r.report_id: r.title for r in search_reports()}
     except Exception:
         logger.exception("보고서 제목 조회 실패")
-    return {}
+        return {}
 
 def _page_label(start: int | None, end: int | None) -> str:
     """쪽 범위 문구.
@@ -126,3 +127,30 @@ def on_summarize(report_ids: list[int]) -> str:
         else:
             parts.append(_summary_markdown(title, summary))
     return "\n\n---\n\n".join(parts)
+
+def on_request(request: str, report_ids: list[int]) -> str:
+    """요청 실행 버튼: 자연어 요청을 run_agent_with_tools()에 보내고 결과와 실행한 도구 이름을 보여 준다.
+    보고서를 고르지 않아도 실행한다 (ECOS 조회처럼 보고서가 필요 없는 도구가 있고, 보고서가 필요한 도구는 도구 쪽에서 안내한다).
+    run_agent_with_tools()가 (답변, 도구 이름 목록)을 돌려주면 도구 이름도 함께 보여 주고, 답변 문자열만 돌려주면 답변만 보여 준다.
+    
+    입력: request (자연어 요청), report_ids (선택한 보고서 번호 목록, 비어 있어도 됨)
+    출력: str (화면에 보여 줄 Markdown)
+    """
+    request = (request or "").strip()
+    if not request:
+        return NEED_REQUEST_MESSAGE
+
+    try:
+        result = _run_agent(request, list(report_ids or []))
+    except Exception:
+        logger.exception("요청 실행 실패: %s", request)
+        return REQUEST_ERROR_MESSAGE
+
+    answer, tool_names = result if isinstance(result, tuple) else (result, [])
+    answer = (answer or "").strip() or EMPTY_ANSWER_MESSAGE
+
+    if not tool_names:
+        return answer
+    tools = " → ".join(f"`{name}`" for name in tool_names)
+
+    return f"{answer}\n\n**실행한 도구**: {tools}"
