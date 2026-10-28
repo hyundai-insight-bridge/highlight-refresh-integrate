@@ -48,7 +48,7 @@ def load_settings() -> Settings:
 		mysql_user=os.getenv("MYSQL_USER"),
 		mysql_password=os.getenv("MYSQL_PASSWORD"),
 		mysql_database=os.getenv("MYSQL_DATABASE"),
-		chroma_mode=os.getenv("CHROMA_MODE"),
+		chroma_mode=chroma_mode,
 		chroma_host=os.getenv("CHROMA_HOST", "localhost"),
 		chroma_port=os.getenv("CHROMA_PORT", "8000"),
 		chroma_persist_path=os.getenv("CHROMA_PERSIST_PATH", "chroma_db/"),

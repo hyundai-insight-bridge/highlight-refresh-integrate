@@ -41,6 +41,8 @@ class Settings(BaseModel):
 	chroma_port: int = 8000
 	chroma_persist_path: str = "chroma_db/"
 	chroma_collection: str = "hri_reports"
+	chroma_user: Optional[str] = None
+	chroma_password: Optional[SecretStr] = None
 
 	# 모델·단가
 	llm_model: str = "gpt-5-mini"
