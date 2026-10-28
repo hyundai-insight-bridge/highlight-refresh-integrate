@@ -1,8 +1,9 @@
-"""질의응답 탭 · build_chat_tab, respond_stream (장유빈) / on_suggest_click, on_term_click (류현수) / on_feedback (임세준)"""
+"""질의응답 탭 · build_chat_tab, respond_stream (장유빈) / on_suggest_click, on_term_click, on_feedback (류현수)"""
 import logging
 
 import gradio as gr
 
+from hri.dao.qa_log_dao import update_feedback
 from hri.domain.schemas import AnswerResult, TermCard
 from hri.exception.errors import ExternalApiError, InvalidInputError, OutputFormatError
 from hri.service.report_service import search_reports
@@ -119,10 +120,10 @@ def build_chat_tab():
 	- 왼쪽 반(챗봇): 맨 위에 페르소나(입문자/실무자/전문가)·보고서 선택(여러 개 가능)·검색 옵션(k, MMR),
 	  그 아래에 대화창(gr.Chatbot)·질문 입력칸·전송 버튼·출처·추천 질문 버튼 3개.
 	- 오른쪽 반(용어 검색): 눌러서 접고 펼치는 '용어 검색' 메뉴(gr.Accordion). 안의 검색 창은
+	  build_term_panel(류현수)이 만든다.
 	추천 질문 버튼은 처음에 시작 질문 3개를 보여 주고(build_suggest_buttons, 류현수), 답변이 끝난 뒤
 	respond_stream()이 후속 질문으로 바꾼다. 버튼을 누르면 질문 입력칸에 그 질문이 들어간다(on_suggest_click).
-	👍/👎 버튼은 숨겨 둔다.
-	피드백 버튼은 on_feedback(임세준)이 연결될 때 보이게 한다.
+	👍/👎 버튼은 숨겨 두고, 기록이 남은 답변이 끝나면 보인다 (connect_feedback_events·on_feedback, 류현수).
 	탭은 로그인 전에는 숨겨 둔 채(visible=False) 만들고, 로그인하면 on_login이 보이게 한다.
 	이벤트 연결은 gr.State가 필요해서 build_app()이 connect_chat_events(state)로 한다.
 
@@ -150,7 +151,7 @@ def build_chat_tab():
 				sources = gr.Markdown()
 				# 추천 질문: 처음에는 시작 질문(STARTER_QUESTIONS, 류현수)을 보여 주고, 답변이 끝나면 후속 질문으로 바꾼다
 				suggest_buttons = build_suggest_buttons(message)
-				# 피드백: on_feedback(임세준)이 연결될 때 보이게 한다 (2차)
+				# 피드백: 처음에는 숨기고, 기록(log_id)이 남은 답변이 끝나면 보인다 (connect_feedback_events, 류현수)
 				with gr.Row():
 					like_btn = gr.Button("👍", visible=False, scale=0)
 					dislike_btn = gr.Button("👎", visible=False, scale=0)
@@ -247,14 +248,96 @@ def connect_chat_events(state: gr.State) -> None:
 
 	- 질문 입력칸에서 Enter, 전송 버튼 클릭 → respond_stream (답변이 흘러나옴)
 	- 질의응답 탭을 열 때 → refresh_report_choices (보고서 선택지 채우기)
+	  (connect_feedback_events가 앞뒤로 👍/👎 숨기기·보이기를 붙여 차례로 실행한다, 류현수)
 	"""
 	c = chat_components
 	stream_inputs = [c["message"], c["chatbot"], c["persona"], c["report_dropdown"], c["k"], c["use_mmr"], state]
 	stream_outputs = [c["chatbot"], c["message"], c["sources"], *c["suggest_buttons"], state]
-	c["message"].submit(respond_stream, inputs=stream_inputs, outputs=stream_outputs)
-	c["send_btn"].click(respond_stream, inputs=stream_inputs, outputs=stream_outputs)
+	stream = {"fn": respond_stream, "inputs": stream_inputs, "outputs": stream_outputs}
+	# 질문 보내기: 👍/👎 숨기기 → respond_stream → 기록이 새로 생긴 답변이면 👍/👎 보이기 (류현수)
+	connect_feedback_events(state, [c["message"].submit, c["send_btn"].click], stream)
 	c["tab"].select(refresh_report_choices, inputs=[state, c["report_dropdown"]], outputs=c["report_dropdown"])
 
+
+# ---------------------------------------------------------------------
+# [류현수] 피드백 · connect_feedback_events, on_feedback
+# ---------------------------------------------------------------------
+FEEDBACK_SAVED_MESSAGE = {1: "👍 피드백을 남겼습니다.", -1: "👎 피드백을 남겼습니다."}
+FEEDBACK_NO_ANSWER_MESSAGE = "피드백을 남길 답변이 없습니다."
+FEEDBACK_ERROR_MESSAGE = "피드백을 저장하지 못했습니다. 잠시 후 다시 시도해 주세요."
+
+
+def _hide_feedback(state: dict):
+	"""새 질문을 보낼 때: 👍/👎 버튼을 숨기고, 질문 전의 기록 번호를 기억해 둔다.
+
+	반환: (👍 갱신, 👎 갱신, 질문 전 last_log_id)
+	"""
+	hidden = gr.update(visible=False, variant="secondary")
+	return hidden, hidden, (state or {}).get("last_log_id")
+
+
+def _show_feedback(state: dict, before_log_id: int | None):
+	"""답변이 끝났을 때: 이번 답변의 기록이 새로 생겼으면 👍/👎 버튼을 보인다.
+
+	로그인 전 안내·오류 답변처럼 기록이 새로 생기지 않으면(last_log_id가 질문 전과 같거나 없음) 숨긴 채로 둔다
+	(그대로 보이면 이전 답변에 피드백이 저장되므로).
+	"""
+	log_id = (state or {}).get("last_log_id")
+	visible = log_id is not None and log_id != before_log_id
+	shown = gr.update(visible=visible, variant="secondary")
+	return shown, shown
+
+
+def connect_feedback_events(state: gr.State, triggers: list, stream: dict) -> None:
+	"""질문 보내기와 👍/👎 버튼을 연결한다. (connect_chat_events 안에서 호출)
+
+	triggers(입력칸 Enter·전송 버튼)마다 아래를 차례로(.then) 실행한다. 따로 연결하면 실행 순서가 보장되지 않아
+	숨기기가 답변 뒤에 실행될 수 있으므로 한 줄로 잇는다.
+	1) _hide_feedback: 버튼 숨기기, 질문 전 기록 번호 기억
+	2) stream: respond_stream (connect_chat_events가 넘긴 fn·inputs·outputs 그대로)
+	3) _show_feedback: 기록이 새로 생긴 답변이면 버튼 보이기
+	그리고 👍 클릭 → on_feedback(1, state), 👎 클릭 → on_feedback(-1, state)
+	"""
+	c = chat_components
+	buttons = [c["like_btn"], c["dislike_btn"]]
+	# 질문 전 기록 번호: 오류·로그인 안내처럼 새 기록이 없는 답변에 버튼을 보이지 않으려고 기억해 둔다
+	before_log_id = gr.State(None)
+	for trigger in triggers:
+		(
+			trigger(_hide_feedback, inputs=state, outputs=[*buttons, before_log_id])
+			.then(**stream)
+			.then(_show_feedback, inputs=[state, before_log_id], outputs=buttons)
+		)
+	c["like_btn"].click(lambda st: on_feedback(1, st), inputs=state, outputs=buttons)
+	c["dislike_btn"].click(lambda st: on_feedback(-1, st), inputs=state, outputs=buttons)
+
+
+def on_feedback(feedback: int, state: dict):
+	"""👍/👎 버튼: state['last_log_id']의 질문 기록에 피드백(1: 👍, -1: 👎)을 저장한다.
+
+	- 저장하면 누른 버튼을 강조(primary)하고 안내 알림을 띄운다. 다시 누르면 새 값으로 바뀐다
+	- 기록 번호가 없거나 저장에 실패하면 경고 알림만 띄우고 버튼은 그대로 둔다
+
+	반환: (👍 갱신, 👎 갱신)
+	"""
+	keep = gr.update()
+	log_id = (state or {}).get("last_log_id")
+	if log_id is None:
+		gr.Warning(FEEDBACK_NO_ANSWER_MESSAGE)
+		return keep, keep
+	try:
+		saved = update_feedback(log_id, feedback)
+	except Exception:
+		logger.exception("피드백 저장 실패: log_id=%s", log_id)
+		saved = False
+	if not saved:
+		gr.Warning(FEEDBACK_ERROR_MESSAGE)
+		return keep, keep
+	gr.Info(FEEDBACK_SAVED_MESSAGE[feedback])
+	return (
+		gr.update(variant="primary" if feedback == 1 else "secondary"),
+		gr.update(variant="primary" if feedback == -1 else "secondary"),
+	)
 
 # ---------------------------------------------------------------------
 # [류현수] 용어 검색 · build_term_panel, on_term_click
