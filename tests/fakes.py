@@ -206,6 +206,7 @@ class FakeExtractors:
 		self.vision_delay = vision_delay
 		self.meta = meta or {"title": "테스트 보고서", "publisher": "현대경제연구원", "published_date": None}
 		self.calls: list = []          # (함수 이름, 주요 인자) 순서대로
+		self.meta_pages: list = []     # extract_report_meta()가 받은 pages
 		self.ocr_order: list = []      # ocr_chart를 부른 image_path 순서
 		self.running = 0               # 지금 실행 중인 chart_to_table 개수
 		self.peak = 0                  # 동시에 실행된 chart_to_table 최대 개수
@@ -214,6 +215,7 @@ class FakeExtractors:
 	# pdf_loader
 	def extract_report_meta(self, file_path, pages):
 		self.calls.append(("extract_report_meta", file_path, [p.page for p in pages]))
+		self.meta_pages = list(pages)  # 정제 전 pages인지 확인용 (test_load_text_node)
 		return dict(self.meta)
 
 	# table_loader

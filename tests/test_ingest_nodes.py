@@ -260,7 +260,7 @@ def make_charts(count):
 
 
 # [확인 11] load_text: 표지·목차를 잘라 낸 본문 쪽(3~7쪽), 머리말·쪽 번호 제거, 빈 쪽(6쪽) 경고,
-#           extract_report_meta에는 표지를 자르기 전(1~7쪽) 정리한 pages를 넘긴다
+#           extract_report_meta에는 표지를 자르기 전(1~7쪽) 정제 전 pages를 넘긴다 (표지 제목 줄이 남아 있어야 함)
 def test_load_text_node(monkeypatch, sample_report):
 	fake = install_extract_stubs(monkeypatch, FakeExtractors())
 
@@ -273,6 +273,7 @@ def test_load_text_node(monkeypatch, sample_report):
 	assert result["warnings"] == [SCANNED_PAGE_WARNING.format(page=6)]
 	assert result["meta"] == fake.meta
 	assert fake.calls == [("extract_report_meta", sample_report, [1, 2, 3, 4, 5, 6, 7])]
+	assert fake.meta_pages[0].text.startswith(SAMPLE_TITLE)
 
 
 # [확인 12] extract_tables: 검수 경고는 warnings에, 큰 표(23행)는 머리글을 붙인 3조각으로 나눠
