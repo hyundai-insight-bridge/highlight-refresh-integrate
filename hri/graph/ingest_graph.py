@@ -114,7 +114,7 @@ def extract_tables_node(state: IngestState) -> dict:
 	"""[표 노드] PDF의 표를 뽑아 검수하고, 마크다운 표(Table)로 만들어 {'tables', 'warnings'}로 돌려준다.
 
 	순서 (명세서 extract_tables_node 행, 함수는 모두 엄정현 table_loader)
-	1. extract_tables(file_path)          : pdfplumber로 표를 행·열 그대로(rows) 뽑는다. 쪽 번호·캡션('[표 n]')도 함께
+	1. extract_tables(file_path)          : pdfplumber로 표를 행·열 그대로(rows) 뽑는다. 쪽 번호·캡션('[표 n]'·HRI '< 제목 >')도 함께
 	2. validate_table(rows)               : 빈 칸·병합 의심 칸을 찾아 '✅ 이상 없음' 또는 경고 글을 돌려준다
 	   - '✅'로 시작하지 않으면 경고로 보고 warnings에 '쪽·캡션·경고'를 넣는다 (표는 그대로 저장)
 	3. split_big_table(rows)              : 행이 많은 표(기본 10행 초과)를 머리글을 붙인 여러 조각으로 나눈다
