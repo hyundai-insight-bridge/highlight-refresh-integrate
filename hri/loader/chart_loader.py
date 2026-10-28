@@ -1,12 +1,14 @@
 """차트 데이터 추출 · extract_charts, ocr_chart, chart_to_table, validate_chart, chart_to_markdown (엄정현)"""
 
-# 엄정현 extract_charts() 추가 (WBS 3.2.13), get_reader()·ocr_chart() 추가 (WBS 3.2.14).
+# 엄정현 extract_charts() 추가 (WBS 3.2.13), get_reader()·ocr_chart() 추가 (WBS 3.2.14),
+# chart_to_table()·validate_chart()·chart_to_markdown() 추가 (WBS 3.2.15).
 # extract_charts_node()(graph/ingest_graph)가 부르고, 돌려준 ChartImage 목록은 process_charts_node()가
-# ocr_chart() → chart_to_table() → validate_chart() → chart_to_markdown() 순서로 표(Table)로 바꾼다 (3.2.14~3.2.15).
+# ocr_chart() → chart_to_table() → validate_chart() → chart_to_markdown() 순서로 표(Table)로 바꾼다.
 # ocr_chart()는 process_charts_node()가 차트마다 **하나씩 차례로** 부른다.
 # 읽은 글자(OcrToken 목록)는 chart_to_table()이 Vision LLM에 그림과 함께 넘기고,
 # validate_chart()가 LLM이 돌려준 숫자가 OCR 숫자에 있는지 비교할 때 쓴다.
 
+import base64
 import re
 import unicodedata
 import uuid
@@ -14,10 +16,12 @@ from collections import defaultdict
 from pathlib import Path
 
 import pymupdf
+from langchain_core.messages import HumanMessage
 
 from hri.config.settings import load_settings
-from hri.domain.schemas import ChartImage, OcrToken
+from hri.domain.schemas import ChartData, ChartImage, OcrToken, Table
 from hri.exception.errors import ChartExtractError
+from hri.loader.table_loader import table_to_markdown
 
 # ---------------------------------------------------------------------
 # extract_charts()에서 쓰는 값
@@ -314,3 +318,169 @@ def ocr_chart(image_path: str) -> list[OcrToken]:
 			tokens.append(OcrToken(text=text, bbox=bbox, conf=float(conf), is_number=False))
 
 	return _sort_tokens(tokens)
+
+
+# ---------------------------------------------------------------------
+# chart_to_table()·validate_chart()·chart_to_markdown()에서 쓰는 값
+# ---------------------------------------------------------------------
+# Vision 응답 최대 토큰 (명세서 chart_to_table 행: max_tokens=1500, get_chat_model 행: '긴 구조화 출력은 호출부에서 1500 지정')
+VISION_MAX_TOKENS = 1500
+
+# validate_chart: OCR에 실제로 있는 숫자 비율이 이보다 작으면 needs_review=True (명세서 validate_chart 행: match_ratio < 0.5)
+MIN_MATCH_RATIO = 0.5
+
+# chart_to_markdown: 표의 왼쪽 위 칸 (x축 라벨 열의 이름). HRI 보고서 표의 왼쪽 위 칸 '구 분'과 같은 뜻
+X_LABEL_HEADER = "구분"
+
+# Vision 모델에 보내는 지시문. {caption}에 캡션 줄, {tokens}에 OCR 글자 목록이 들어간다
+# 규칙 1~3은 명세서 chart_to_table 행 그대로 (OCR 숫자 우선 · 근사값이면 needs_review · 범례에 없는 계열 금지)
+# 규칙 3 둘째 문장: HRI 차트 중 범례 없는 계열 1개짜리(예: '3%대 성장…' 10쪽 왼쪽·11쪽 오른쪽)는 계열 이름을 캡션에서 가져와야 해서 넣음
+# 규칙 4~6: ChartData·ChartSeries 필드 설명(x축 순서, 못 읽은 칸 None, 단위 없으면 None, confidence는 validate_chart가 채움)을 지시문으로 옮김
+CHART_PROMPT = """그림은 경제 보고서 속 차트 1개입니다. 차트를 표 데이터로 복원하세요.
+{caption}
+[규칙]
+1. 값은 아래 OCR 글자 중 숫자(데이터 레이블)를 우선 사용합니다.
+2. 데이터 레이블이 없어 축 눈금을 보고 읽은 근사값이 하나라도 있으면 needs_review를 true로 합니다.
+3. 범례에 없는 계열 이름은 만들지 않습니다. 범례가 없는 계열 1개짜리 차트는 캡션이나 그림 속 제목을 계열 이름으로 씁니다.
+4. x_labels는 x축 라벨을 왼쪽부터 순서대로 적습니다 (원그래프는 조각 이름).
+5. 계열마다 values는 x_labels와 같은 순서·같은 개수로 적고, 읽을 수 없는 값은 null로 둡니다. 숫자를 지어내지 않습니다.
+6. unit은 그림에 적힌 단위(예: %, 억 달러)만 적고, 없으면 null입니다. confidence는 비워 둡니다.
+
+[OCR 글자] 글자 (x0, y0, x1, y1) 픽셀 좌표, 위→아래·왼→오른쪽 순
+{tokens}"""
+
+
+def _format_tokens(tokens: list[OcrToken]) -> str:
+	"""OCR 토큰 목록을 지시문에 넣을 글로 만든다. 한 줄에 '글자 (x0, y0, x1, y1)' 1개.
+
+	좌표를 같이 보내는 이유: 같은 숫자가 여러 번 나올 때 어느 막대·점 옆 글자인지 그림과 맞춰 보게 하려고
+	(명세서 chart_to_table 행: 'OCR 토큰 목록(텍스트·좌표)')
+	"""
+	if not tokens:
+		return "(읽은 글자 없음)"
+	lines = []
+	for token in tokens:
+		x0, y0, x1, y1 = token.bbox
+		lines.append(f"{token.text} ({x0:.0f}, {y0:.0f}, {x1:.0f}, {y1:.0f})")
+	return "\n".join(lines)
+
+
+def chart_to_table(chart: ChartImage, tokens: list[OcrToken]) -> ChartData:
+	"""[차트 구조화] 차트 그림과 OCR 글자를 Vision 모델에 보내 표 데이터(ChartData)로 복원한다.
+
+	순서 (명세서 chart_to_table 행)
+	1. VISION_MODEL은 Settings에서 읽는다 (load_settings().vision_model)
+	   - .env에 'VISION_MODEL='처럼 빈 값이 있으면 os.getenv가 ''를 돌려주고, get_chat_model('')은 LLM_MODEL로 바뀐다
+	     → 다른 모델로 몰래 호출되지 않도록 ChartExtractError를 낸다
+	2. 차트 PNG를 base64 data URL('data:image/png;base64,...')로 바꾼다
+	3. HumanMessage(content=[지시문+OCR 토큰 목록 글, image_url]) 1개를 만든다
+	4. get_chat_model(VISION_MODEL, temperature=0, max_tokens=1500).with_structured_output(ChartData)로 호출한다
+	5. 규칙(지시문 CHART_PROMPT): OCR 숫자 우선 · 눈금으로 읽은 근사값이 있으면 needs_review=True · 범례에 없는 계열은 만들지 않음
+
+	실패하면 ChartExtractError (process_charts_node가 그 차트만 건너뛰고 warnings에 메시지를 남긴다)
+	- 그림 파일을 읽지 못함 / Vision 호출·형식 변환 실패 / 응답에 x축 라벨이나 계열이 없음
+	- 메시지는 'n쪽 차트: …' (fakes.py·test_ingest_nodes의 경고 문구와 같은 모양)
+	confidence는 여기서 채우지 않는다. validate_chart()가 match_ratio로 채운다.
+	"""
+	# llm_client는 import할 때 .env를 읽으므로 함수 안에서 import한다 (ingest_graph 노드들과 같은 방식)
+	from hri.llm.llm_client import get_chat_model
+
+	# 1) 모델 이름
+	vision_model = load_settings().vision_model
+	if not vision_model:
+		raise ChartExtractError(f"{chart.page}쪽 차트: VISION_MODEL이 비어 있습니다 (.env의 VISION_MODEL에 팀에서 정한 모델 이름을 넣어 주세요)")
+
+	# 2) 그림 → base64 data URL
+	try:
+		with open(chart.image_path, "rb") as file:
+			image_b64 = base64.b64encode(file.read()).decode("utf-8")
+	except OSError as error:
+		raise ChartExtractError(f"{chart.page}쪽 차트: 그림 파일을 읽지 못함 ({chart.image_path})") from error
+
+	# 3) 글 + 그림을 담은 메시지 1개
+	caption = f"캡션: {chart.caption}\n" if chart.caption else ""
+	text = CHART_PROMPT.format(caption=caption, tokens=_format_tokens(tokens))
+	message = HumanMessage(content=[
+		{"type": "text", "text": text},
+		{"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_b64}"}},
+	])
+
+	# 4) Vision 호출 → ChartData
+	model = get_chat_model(model=vision_model, temperature=0, max_tokens=VISION_MAX_TOKENS).with_structured_output(ChartData)
+	try:
+		data = model.invoke([message])
+	except Exception as error:
+		raise ChartExtractError(f"{chart.page}쪽 차트: Vision 응답을 ChartData로 바꾸지 못함 ({error})") from error
+
+	# 표로 만들 내용이 없으면 실패로 본다 (빈 표가 저장·검색되지 않게)
+	if data is None or not data.x_labels or not data.series:
+		raise ChartExtractError(f"{chart.page}쪽 차트: Vision 응답에 x축 라벨이나 계열이 없음")
+	return data
+
+
+def validate_chart(data: ChartData, tokens: list[OcrToken]) -> ChartData:
+	"""[추출 결과 검수] Vision이 복원한 값을 OCR 글자와 맞춰 보고 confidence·needs_review를 채운 ChartData를 돌려준다.
+
+	순서 (명세서 validate_chart 행)
+	1. 계열마다 값 개수 = x축 라벨 개수인지 확인한다
+	2. LLM이 낸 숫자(None 뺀 값) 중 OCR 숫자 토큰(is_number=True)에 실제로 있는 비율 = match_ratio → confidence
+	   - 숫자 토큰 글자는 ocr_chart()가 NUMBER 모양('3.5', '-1.0', '12000')으로 정리해 두었으므로 float()로 바로 비교한다
+	   - 값이 하나도 없으면 0.0
+	3. needs_review = 이미 True(chart_to_table에서 근사값) 또는 개수가 다름 또는 match_ratio < 0.5
+	   - True여도 버리지 않고 저장한다. 답변 출처에 '(추정값)'이 붙는다 (source_formatter·rag_prompt)
+	받은 data는 바꾸지 않고 model_copy로 새 ChartData를 만든다.
+	"""
+	counts_ok = all(len(series.values) == len(data.x_labels) for series in data.series)
+
+	values = [value for series in data.series for value in series.values if value is not None]
+	ocr_numbers = {float(token.text) for token in tokens if token.is_number}
+	matched = sum(1 for value in values if value in ocr_numbers)
+	match_ratio = matched / len(values) if values else 0.0
+
+	needs_review = data.needs_review or not counts_ok or match_ratio < MIN_MATCH_RATIO
+	return data.model_copy(update={"confidence": match_ratio, "needs_review": needs_review})
+
+
+def _format_value(value: float | None) -> str:
+	"""표 칸에 넣을 글. 못 읽은 값(None)은 빈칸 '', 나머지는 str() 그대로 (3.0 → '3.0', 50.8 → '50.8').
+
+	HRI 차트 데이터 레이블은 거의 모두 소수 첫째 자리까지 적혀 있어('3.0'·'0.0'·'50.8') str() 결과와 같다.
+	"""
+	if value is None:
+		return ""
+	return str(value)
+
+
+def chart_to_markdown(data: ChartData, chart: ChartImage) -> Table:
+	"""[표 형식 변환] ChartData를 마크다운 표로 바꿔 Table(source_type='chart')로 돌려준다.
+
+	순서 (명세서 chart_to_markdown 행)
+	1. rows: 머리글 = [구분, 계열 이름…], 본문 = x축 라벨마다 [라벨, 계열별 값…] (x축 라벨이 행, 계열이 열)
+	   - 단위가 있으면 왼쪽 위 칸에 '구분 (단위: %)'로 붙인다 (Table에 단위 칸이 없어 표 안에 남긴다)
+	   - 못 읽은 값(None)과 값 개수가 라벨보다 적은 계열의 모자란 칸은 빈칸, 많으면 넘치는 값은 버린다 (개수 불일치는 validate_chart가 needs_review로 표시)
+	2. markdown = table_to_markdown(rows) (표 노드와 같은 함수 재사용)
+	3. Table(source_type='chart', image_path, confidence, needs_review)
+	   - caption: 차트 캡션(extract_charts가 찾은 '< 제목 >'·'[그림 n]'), 없으면 차트 안 제목(data.title)
+	   - 캡션·추정값 여부는 마크다운 안에 다시 쓰지 않는다: 답변·출처·보고서 본문을 만드는 곳(rag_prompt.format_docs,
+	     source_formatter, report_service._format_table)이 Table.caption·needs_review로 이미 '[… / 캡션] (추정값)'을 붙인다
+	이후 표와 같은 길(summarize_tables → split → persist)로 저장·검색된다.
+	"""
+	corner = f"{X_LABEL_HEADER} (단위: {data.unit})" if data.unit else X_LABEL_HEADER
+	rows: list[list[str]] = [[corner] + [series.name for series in data.series]]
+	for index, label in enumerate(data.x_labels):
+		row = [label]
+		for series in data.series:
+			value = series.values[index] if index < len(series.values) else None
+			row.append(_format_value(value))
+		rows.append(row)
+
+	return Table(
+		page=chart.page,
+		caption=chart.caption or data.title,
+		rows=rows,
+		markdown=table_to_markdown(rows),
+		source_type="chart",
+		image_path=chart.image_path,
+		confidence=data.confidence,
+		needs_review=data.needs_review,
+	)
