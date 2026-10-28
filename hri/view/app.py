@@ -127,7 +127,8 @@ def build_app():
 			inputs=state,
 			outputs=[tabs, summary_components["report_dropdown"]]
 		)
-
+		
+		# 대화 이어가기 버튼 누르면 질의응답 탭 Chatbot에 이전 대화 채우기
 		history_components["restore_btn"].click(
 			fn=on_restore,
 			inputs=[history_components["session_dropdown"], state],
