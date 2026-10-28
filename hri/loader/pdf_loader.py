@@ -1,11 +1,14 @@
 """텍스트·메타데이터 추출 · load_pdf, clean_text, find_body_start, extract_report_meta (엄정현)"""
 
-# 엄정현 load_pdf()·clean_text()·find_body_start() 추가.
-# 세 함수는 load_text_node()(graph/ingest_graph)가 load_pdf() → clean_text() → find_body_start() 순서로 부른다.
+# 엄정현 load_pdf()·clean_text()·find_body_start()·extract_report_meta() 추가.
+# load_text_node()(graph/ingest_graph)가 load_pdf() → clean_text() → find_body_start() 순서로 부르고,
+# extract_report_meta()에는 정제 전 load_pdf() 결과를 넘긴다 (clean_text()가 표지의 제목 줄도 머리말로 지우기 때문).
 
 import math
 import re
 from collections import Counter
+from datetime import date
+from pathlib import Path
 
 import pymupdf
 
@@ -47,6 +50,33 @@ SUMMARY_TITLE = re.compile(r"executive\s*summary|요\s*약", re.IGNORECASE)
 
 # 본문 시작 패턴 ② 1장 제목: 줄 앞부분이 '1. 개요', 'Ⅰ. 최근 동향' ('1.1%'처럼 점 뒤가 숫자면 제외)
 CHAPTER_ONE = re.compile(r"(1|Ⅰ|I)\s*[.．]\s*[^\d\s.]")
+
+# ---------------------------------------------------------------------
+# extract_report_meta()에서 쓰는 값
+# ---------------------------------------------------------------------
+# 발행일: 'YYYY.MM.DD' (HRI 표지 '24-19(통권 977호) 2024.11.22', '2024.12.06.')
+# 다른 기관 표지도 읽도록 구분 기호 . - / 와 그 사이 공백('2025. 11. 12')을 받는다. 일까지 있어야 date로 만들 수 있다
+DATE_PATTERN = re.compile(r"(\d{4})\s*[.\-/]\s*(\d{1,2})\s*[.\-/]\s*(\d{1,2})")
+
+# HRI 표지의 발간번호 줄: '24-19(통권 977호) 2024.11.22', 통권이 없는 '25-02 2025.02.14' (37편 모두 있음, 패턴분석 10/21)
+# 표지에 기관 이름이 없어서, 이 줄이 있으면 현대경제연구원 보고서로 본다
+HRI_ISSUE_LINE = re.compile(r"\d{2}-\d{1,2}(\(통권 \d+호\))?\s+\d{4}\.\d{2}\.\d{2}")
+HRI_PUBLISHER = "현대경제연구원"
+
+# 표지 부제 줄: '- 2026년 상반기 물가 평가 및 하반기 전망'. 제목은 이 줄 앞까지
+SUBTITLE_LINE = re.compile(r"-\s")
+
+# 제목 후보 줄은 한글이나 영문이 있어야 한다 ('․' 같은 기호만 있는 줄은 건너뜀)
+HAS_LETTER = re.compile(r"[가-힣A-Za-z]")
+
+# 표지 제목이 두세 줄로 나뉜 경우가 있다 (HRI 37편 중 최대 3줄: '성공적인 총량 지표…에' / '가려진 K자형 경제…,' / '그 솔루션을 찾아서')
+TITLE_MAX_LINES = 3
+
+# PDF 메타데이터 제목이 파일 이름이면 버린다 (예: 브라우저로 인쇄한 PDF의 '684314165-….png (4468×4144)')
+FILE_NAME_TITLE = re.compile(r"\.(pdf|hwpx?|docx?|pptx?|xlsx?|png|jpe?g)\b", re.IGNORECASE)
+
+# Report.title·reports.title 길이 (255자)
+TITLE_MAX_CHARS = 255
 
 
 # ---------------------------------------------------------------------
@@ -197,3 +227,84 @@ def find_body_start(pages: list[Page]) -> list[Page]:
 				return [first_page] + pages[index + 1:]
 
 	return pages
+
+
+# ---------------------------------------------------------------------
+# 4. 보고서 정보 (제목·발행기관·발행일)
+# ---------------------------------------------------------------------
+def _meta_title(file_path: str) -> str | None:
+	"""① PDF 메타데이터의 제목(/Title). 비어 있거나 파일 이름처럼 생겼으면 None.
+
+	HRI 37편은 모두 비어 있다 (한글(Hwp) → Hancom PDF로 만든 파일). 브라우저·워드에서 만든 PDF에는 들어 있는 경우가 있다.
+	"""
+	with pymupdf.open(file_path) as doc:
+		title = (doc.metadata or {}).get("title") or ""
+	title = title.strip()
+	if not title or FILE_NAME_TITLE.search(title):
+		return None
+	return title
+
+
+def _cover_title(lines: list[str]) -> str | None:
+	"""② 표지(첫 쪽)의 제목. 발간번호·날짜 줄과 기호만 있는 줄은 건너뛰고, 그다음 줄부터 제목으로 본다.
+
+	제목이 여러 줄로 나뉜 표지가 있어서, 부제('- …')나 날짜 줄이 나오기 전까지 이어진 줄(최대 TITLE_MAX_LINES줄)을 붙인다.
+	그런 줄이 나오지 않으면(HRI 표지가 아니면) 어디까지가 제목인지 알 수 없으므로 첫 줄만 쓴다.
+
+	예) ['26-07(통권 1008호) 2026.04.30', '미-이란 전쟁 이후의 경제 전략을 생각하며', '(2026년 수정 경제 전망)', '- 2026년 …']
+	    → '미-이란 전쟁 이후의 경제 전략을 생각하며 (2026년 수정 경제 전망)'
+	"""
+	title_lines = []
+	for line in lines:
+		if not title_lines:
+			# 제목 앞에 오는 발간번호·날짜 줄('25-07(통권 986호) 2025.04.30'), 기호 줄('․')은 건너뛴다
+			if DATE_PATTERN.search(line) or not HAS_LETTER.search(line):
+				continue
+			title_lines.append(line)
+			continue
+		# 부제나 날짜 줄이 나오면 그 앞까지가 제목
+		if SUBTITLE_LINE.match(line) or DATE_PATTERN.search(line):
+			return " ".join(title_lines)
+		if len(title_lines) == TITLE_MAX_LINES:
+			break
+		title_lines.append(line)
+
+	return title_lines[0] if title_lines else None
+
+
+def _cover_date(lines: list[str]) -> date | None:
+	"""표지에서 처음 나오는 'YYYY.MM.DD' 날짜. 없는 날짜(2025.13.40)는 건너뛰고, 못 찾으면 None."""
+	for line in lines:
+		for year, month, day in DATE_PATTERN.findall(line):
+			try:
+				return date(int(year), int(month), int(day))
+			except ValueError:
+				continue
+	return None
+
+
+def extract_report_meta(file_path: str, pages: list[Page]) -> dict:
+	"""insert_report()에 넣을 제목·발행기관·발행일을 dict로 돌려준다.
+
+	pages는 정제 전 load_pdf() 결과를 넘긴다 (clean_text()는 본문 머리말과 같은 표지 제목 줄도 지운다. 10/26 기록).
+
+	- 제목: ① PDF 메타데이터 /Title → ② 첫 쪽 제목 줄 → ③ 파일 이름(확장자 뺀 이름) 순서로 찾는다
+	- 발행일: 첫 쪽의 'YYYY.MM.DD' 날짜. 못 찾으면 None
+	  (PDF 메타데이터의 만든 날짜는 파일을 만든 날이라 발행일과 다를 수 있어 쓰지 않는다)
+	- 발행기관: 첫 쪽에 HRI 발간번호 줄('24-19(통권 977호) 2024.11.22')이 있으면 '현대경제연구원', 못 찾으면 None
+	  (화면에는 '확인할 수 없는 발행기관'으로 표시, report_view.NO_PUBLISHER)
+
+	예) HRI 표지 '24-19(통권 977호) 2024.11.22' → {'title': '2024년 부동산 시장의 특징과 시사점',
+	    'publisher': '현대경제연구원', 'published_date': date(2024, 11, 22)}
+	"""
+	first_text = pages[0].text if pages else ""
+	lines = _split_lines(first_text)
+
+	title = _meta_title(file_path) or _cover_title(lines) or Path(file_path).stem
+	publisher = HRI_PUBLISHER if any(HRI_ISSUE_LINE.search(line) for line in lines) else None
+
+	return {
+		"title": title[:TITLE_MAX_CHARS],
+		"publisher": publisher,
+		"published_date": _cover_date(lines),
+	}

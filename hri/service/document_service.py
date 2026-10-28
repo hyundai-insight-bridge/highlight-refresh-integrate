@@ -69,40 +69,70 @@ import logging
 from collections.abc import Iterator
 from langchain_core.callbacks import UsageMetadataCallbackHandler
 from hri.graph.registry import get_ingest_graph
-from hri.llm.llm_client import cost_korean_won
+from hri.llm.llm_client import cost_korean_won, get_usd_krw
 from hri.dao.usage_dao import insert_usage
+from hri.domain.schemas import LlmUsage
 
 logger = logging.getLogger(__name__)
+
+def _record_usage(usage: UsageMetadataCallbackHandler, user_id: str, report_id: int | None) -> None:
+	"""그래프에서 쓴 AI 사용량을 모델별로 llm_usage에 저장한다 (flow='ingest').
+	업로드 결과와 상관없이 쓴 비용은 남기려고 finally에서 부른다.
+	여기서 나는 오류(환율 조회, DB)는 로그만 남기고 삼킨다: 이미 끝난 업로드를 오류처럼 보이게 하지 않으려고.
+	"""
+	if not usage.usage_metadata:
+		return
+	try:
+		usd_to_krw = get_usd_krw()
+		for model, tokens in usage.usage_metadata.items():
+			insert_usage(LlmUsage(
+				flow="ingest",
+				user_id=user_id,
+				ref_id=report_id,
+				model=model,
+				input_tokens=tokens.get("input_tokens", 0),
+				output_tokens=tokens.get("output_tokens", 0),
+				cost_krw=cost_korean_won({model: tokens}, usd_to_krw),
+			))
+	except Exception:
+		logger.exception("업로드 사용량 기록 실패: report_id=%s", report_id)
 
 def upload_report(file_path: str, user_id: str) -> Iterator[dict]:
 	"""PDF를 업로드 그래프로 처리하며 진행 상황을 하나씩 내보낸다.
 
 	내보내는 dict 모양
 	진행: {"type": "progress", "step": 노드이름}
-	성공: {"type": "result", "report_id": int, "counts": dict, "warnings": list}
+	성공: {"type": "result", "report_id": int, "counts": dict, "warnings": list, "meta": dict | None, "page_count": int}
 	실패: {"type": "error", "reason": str}
+	warnings는 load_text, extract_tables, process_charts등 모든 노드가 쌓은 것을 모아서 담는다.
+	meta(제목, 발행기관, 발행일)와 page_count는 load_text 노드 결과로, 업로드 결과 화면(on_upload)이 쓴다.
 	"""
 	graph = get_ingest_graph()
 	usage = UsageMetadataCallbackHandler()
 	report_id: int | None = None
 	result: dict | None = None
+	warnings: list[str] = []
+	meta: dict | None = None
+	page_count = 0
 	try:
-		for update in graph.stream({
-			"file_path": file_path, "user_id": user_id},
+		for update in graph.stream(
+			{"file_path": file_path, "user_id": user_id},
 			stream_mode = "updates",
 			config = {"callbacks": [usage]},
 		):
 			for node, state in update.items():
 				yield {"type": "progress", "step": node}
 				state = state or {}
+				warnings.extend(state.get("warnings") or [])
+
+				if node == "load_text":
+					meta = state.get("meta")
+					page_count = len(state.get("pages") or [])
 				if node == "validate" and state.get("error"):
 					result = {"type": "error", "reason": state.get("error")}
-                
-				if node == "persist":
-					report_id = state.get("report_id")
-					result = {"type": "result", "report_id": report_id,
-					          "counts": state.get("counts", {}),
-					          "warnings": state.get("warnings", [])}
+				if node == "persist" and state.get("report_id") is not None:
+					report_id = state["report_id"]
+					result = {"type": "result", "report_id": report_id, "counts": state.get("counts", {}), "warnings": warnings, "meta": meta, "page_count": page_count}
 		yield result or {"type": "error", "reason": "저장 단계까지 진행되지 않았습니다."}
     
 	except Exception:
@@ -110,5 +140,4 @@ def upload_report(file_path: str, user_id: str) -> Iterator[dict]:
 		yield {"type": "error", "reason": "업로드 처리 중 오류가 발생했습니다."}
 
 	finally:
-		if usage.usage_metadata:
-			insert_usage(flow="ingest", ref_id=report_id, usage=usage.usage_metadata, cost_krw=cost_korean_won(usage.usage_metadata))
+		_record_usage(usage, user_id, report_id)

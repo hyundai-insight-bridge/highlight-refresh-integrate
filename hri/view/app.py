@@ -13,7 +13,7 @@ from hri.graph.registry import get_ingest_graph, get_qa_graph, get_summary_graph
 from hri.view.user_view import build_login_tab, on_login, on_logout, login_components
 from hri.view.report_view import build_upload_tab, build_report_list_panel, on_view_summary, on_go_chat, on_report_select, report_list_components
 from hri.view.summary_view import build_summary_tab, summary_components
-from hri.view.chat_view import build_chat_tab, chat_components
+from hri.view.chat_view import build_chat_tab, chat_components, connect_chat_events
 from hri.view.indicator_view import on_compare
 from hri.view.history_view import build_history_tab
 from hri.view.admin_view import build_admin_tab
@@ -95,6 +95,8 @@ def build_app():
 			# 요약·분석, 질의응답, 내 기록, 관리자 탭
 			summary_tab = build_summary_tab()
 			chat_tab = build_chat_tab()
+			# 질의응답 탭 버튼 연결 (state가 필요해서 build_app에서 부름)
+			connect_chat_events(state)
 			history_tab = build_history_tab()
 			admin_tab = build_admin_tab()
 
