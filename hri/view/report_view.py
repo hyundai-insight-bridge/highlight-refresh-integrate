@@ -1,6 +1,7 @@
 """보고서 탭 · build_upload_tab, on_upload (김희진) / build_report_list_panel (장유빈)"""
 import gradio as gr
-
+import os
+import logging
 from hri.service.report_service import search_reports
 from hri.service.document_service import upload_report
 # ---------------------------------------------------------------------
@@ -148,6 +149,8 @@ STEP_LABELS = {
 NEED_FILE_MESSAGE = "PDF 파일을 선택하세요."
 NEED_LOGIN_MESSAGE = "로그인이 필요합니다."
 
+logger = logging.getLogger(__name__)
+
 # app.py가 업로드 버튼 click을 연결할 때 쓰는 컴포넌트 모음 (login_components 등과 같은 방식)
 upload_components = {}
 
@@ -160,7 +163,7 @@ def build_upload_tab():
 	출력: gr.Tab (업로드 탭)
 	"""
 	with gr.Tab("업로드", id="upload") as tab:
-		file = gr.File(label="보고서 PDF", file_types=[".pdf"], type="filepath")
+		file = gr.File(label="보고서 PDF", file_types=[".pdf"],file_count="multiple" , type="filepath")
 		upload_btn = gr.Button("업로드", variant="primary")
 		result = gr.Markdown()
 
@@ -169,10 +172,9 @@ def build_upload_tab():
 
 def _progress_markdown(done_steps: list[str]) -> str:
 	"""끝난 단계를 체크 표시로 보여 주는 진행 상황 문구."""
-	lines = [f"✅ {STEP_LABELS.get(step, step)}" for step in done_steps]
-	return "### 처리 증 ...\n" + "\n".join(lines)
+	return "\n".join(f"✅ {STEP_LABELS.get(step, step)}" for step in done_steps)
 
-def _result_markdown(event:dict, report) -> str:
+def _result_markdown(event: dict, report) -> str:
 	"""업로드 성공 결과 문구 (보고서 정보 + 청크 수 + 차트 경고)."""
 	counts = event.get("counts") or {}
 	warnings = event.get("warnings") or []
@@ -182,7 +184,7 @@ def _result_markdown(event:dict, report) -> str:
 		lines += [
 			f"- **보고서명**: {report.title}",
 			f"- **발행기관**: {report.publisher or NO_PUBLISHER}",
-			f"- **발행일**: {report.published_date.isformat() if report.published_date else '확인할 수 없음'}",
+			f"- **발행일**: {report.published_date.isoformat() if report.published_date else '확인할 수 없음'}",
 			f"- **페이지 수**: {report.page_count}"
 		]
 	lines.append(
@@ -194,21 +196,31 @@ def _result_markdown(event:dict, report) -> str:
 
 	return "\n".join(lines)
 
-def on_upload(file_path: str | None, state: dict):
-	"""업로드 버튼: upload_report()가 내보내는 진행 상황을 Markdown에 차례로 갱신한다. (제네레이터)
+def _find_report(report_id):
+	"""방금 올린 보고서의 정보(제목, 발행기관 등)를 목록에서 찾는다.
+	못 찾아도 결과는 보여주려고 None을 돌려준다."""
+	try:
+		return next((r for r in search_reports() if r.report_id == report_id), None)
+	except Exception:
+		return None
+
+def on_upload(file_paths: list[str] | None, state: dict):
+	"""업로드 버튼: 고른 PDF를 한 개씩 upload_report()가 처리하며 진행 상황을 Markdown에 갱신한다. (제네레이터)
 	
 	순서
 	1. 파일이 없거나 로그인 전이면 안내만 보여 준다
-	2. progress 이벤트마다 끝난 단계 목록을 갱신해 보여 준다
-	3. error 이벤트(검증 실패 등)면 사유를 보여 주고 끝낸다
-	4. result 이벤트면 보고서 정보, 청크 수, 차트 경고를 보여 주고, search_reports()로 요약, 질의응답 탭의 보고서 드롭다운 choices를 갱신한다
+	2. 파일마다 '[번호/전체] 파일명' 블록을 만들고, progress 이벤트마다 끝난 단계를 갱신한다
+	3. 한 파일이 실패해도(검증 실패 등) 그 블록에 사유를 적고 다음 파일로 넘어간다.
+	4. 모두 끝나면 성공한 파일이 있을 때만 search_reports()로 요약, 질의응답 탭 드롭다운 choices를 갱신한다.
 	
 	yield 값: (진행/결과 Markdown, 요약 탭 드롭다운 갱신, 질의응답 탭 드롭다운 갱신)
 	"""
 	keep = gr.update() # "바꾸지 않음"
 
-	# 1. 입력 확인
-	if not file_path:
+	# 1. 입력 확인 (파일 1개가 문자열로 와도 목록으로 바꿔 처리)
+	if isinstance(file_paths, str):
+		file_paths = [file_paths]
+	if not file_paths:
 		yield NEED_FILE_MESSAGE, keep, keep
 		return
 	user = (state or {}).get("user")
@@ -216,31 +228,49 @@ def on_upload(file_path: str | None, state: dict):
 	if not user:
 		yield NEED_LOGIN_MESSAGE, keep, keep
 		return
+	total = len(file_paths)
+	blocks: list[str] = [] # 끝난 파일들의 블록
+	success_count = 0
 
-	# 2. 단계별 진행
-	done_steps: list[str] = []
-	yield "### 처리 중...\n⏳ 시작합니다", keep, keep
+	def screen(cuurent: str = "") -> str:
+		return "\n\n---\n\n".join([*blocks, cuurent] if cuurent else blocks)
 
-	for event in upload_report(file_path, user["user_id"]):
-		kind = event.get("type")
+	# 2. 파일별 처리
+	for no, path in enumerate(file_paths, 1):
+		header = f"### [{no}/{total}] {os.path.basename(path)}"
+		done_steps: list[str] = []
+		outcome = None # 이 파일의 마지막 이벤트 (result 또는 error)
+		yield screen(f"{header}\n⏳ 시작합니다"), keep, keep
 
-		if kind == "progress":
-			done_steps.append(event["step"])
-			yield _progress_markdown(done_steps), keep, keep
-		elif kind == "error":
-			# 3. 검증 실패 사유 등
-			yield f"### ❌ 업로드 실패\n{event.get('reason', '알 수 없는 오류')}", keep, keep
-			return
-		elif kind == "result":
-			# 4. 완료: 드롭다운 갱신용 목록 (못 가져와도 결과는 보여 준다)
-			report = None
-			choices = None
-			try:
-				reports = search_reports()
-				choices = [(r.title, r.report_id) for r in reports]
-				report = next((r for r in reports if r.report_id == event.get("report_id")), None)
-			except Exception:
-				pass
+		try:
+			for event in upload_report(path, user["user_id"]):
+				if event.get("type") == "progress":
+					done_steps.append(event["step"])
+					yield screen(f"{header}\n{_progress_markdown(done_steps)}"), keep, keep
+				else:
+					outcome = event # break하지 않고 끝까지 돌려야 upload_report의 마무리(사용량 기록)가 실행된다
+		except Exception:
+			logger.exception("업로드 화면 처리 실패: %s", path)
+			if outcome is None:
+				outcome = {"type": "error", "reason": "업로드 처리 중 오류가 발생했습니다."}
 
-			dropdown = gr.update(choices=choices) if choices is not None else keep
-			yield _result_markdown(event, report), dropdown, dropdown
+		# 3. 이 파일의 결과 블록
+		if outcome and outcome.get("type") == "result":
+			success_count += 1
+			blocks.append(f"{header}\n{_result_markdown(outcome, _find_report(outcome.get('report_id')))}")
+		else:
+			reason = (outcome or {}).get("reason", "알 수 없는 오류")
+			blocks.append(f"{header}\n❌ **업로드 실패**: {reason}")
+
+		yield screen(), keep, keep
+
+	# 4. 성공한 파일이 있으면 드롭다운 갱신 (목록을 못 가져와도 결과는 이미 보여 줬다)
+	dropdown = keep
+	if success_count:
+		try:
+			dropdown = gr.update(choices=[(r.title, r.report_id) for r in search_reports()])
+		except Exception:
+			logger.exception("보고서 목록 갱신 실패")
+
+	summary_line = f"### 업로드 {total}건 중 {success_count}건 완료"
+	yield f"{summary_line}\n\n{screen()}", dropdown, dropdown
