@@ -129,6 +129,8 @@ def build_admin_tab():
 	- 관리자 계정에만 보이도록 처음에는 숨겨 둔다 (visible=False, 관리자가 로그인하면 on_login이 보이게 함)
 	- 새로고침 버튼은 state가 필요 없어서 여기서 바로 on_refresh()와 연결한다
 	- 차트(gr.Image)는 자리만 두고, 값은 2차(일별 질문 수)에서 채운다
+	- 차트가 없으면 빈 이미지 칸 대신 '표시할 데이터가 없습니다' 안내 문구를 보여 준다
+	  (1차에는 차트가 없어서 이미지 칸은 숨기고 안내 문구만 보임)
 
 	입력: 없음
 	출력: gr.Tab (관리자 탭)
@@ -139,8 +141,8 @@ def build_admin_tab():
 		# 사용 현황
 		gr.Markdown("### 사용 현황")
 		top_questions = gr.Markdown()
-		daily_chart = gr.Image(label="일별 질문 수", interactive=False)
-
+		daily_chart = gr.Image(label="일별 질문 수", interactive=False, visible=False)
+		
 		# 답변 품질
 		gr.Markdown("### 답변 품질")
 		source_ratio = gr.Markdown()

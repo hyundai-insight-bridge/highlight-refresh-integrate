@@ -3,6 +3,7 @@
 진짜 build_admin_tab(), on_refresh()는 그대로 쓰고,
 DB가 필요한 get_dashboard_data()만 가짜 DashboardData를 돌려주게 바꾼다.
 1부: 함수 확인 (✅/❌) → 2부: 화면을 띄워서 새로고침 버튼 직접 눌러 보기
+(리뷰 반영: 차트가 없으면 이미지 칸 대신 '표시할 데이터가 없습니다' 안내 문구가 보이는지도 확인)
 
 실행 (레포 맨 위 폴더에서):
 	poetry run python -m tests.try_admin_tab
@@ -73,13 +74,23 @@ for block in demo.blocks.values():
 		images = images + 1
 	if isinstance(block, gr.Button) and block.value == "새로고침":
 		buttons = buttons + 1
-check("3 화면 구성: gr.Markdown(제목 5 + 값 6)·gr.Image 1·새로고침 버튼 1", markdowns == 11 and images == 1 and buttons == 1, f"Markdown {markdowns}, Image {images}, 버튼 {buttons}")
+check("3 화면 구성: gr.Markdown(제목 5 + 값 6 + 안내 1)·gr.Image 1·새로고침 버튼 1", markdowns == 12 and images == 1 and buttons == 1, f"Markdown {markdowns}, Image {images}, 버튼 {buttons}")
+
+# 리뷰 반영: 차트가 없으면 이미지 칸은 숨기고 안내 문구를 보여 줌
+chart = None
+chart_message = None
+for block in demo.blocks.values():
+	if isinstance(block, gr.Image):
+		chart = block
+	if isinstance(block, gr.Markdown) and block.value == "일별 질문 수: 표시할 데이터가 없습니다.":
+		chart_message = block
+check("4 차트가 없으면 이미지 칸은 숨기고 안내 문구 표시", chart.visible == False and chart_message != None and chart_message.visible == True)
 
 result = on_refresh()
-check("4 on_refresh → tuple 6개", isinstance(result, tuple) and len(result) == 6, len(result))
-check("5 표 4개는 get_dashboard_data() 값 그대로", result[0] == FAKE_DATA.top_questions and result[3] == FAKE_DATA.usage_by_flow and result[4] == FAKE_DATA.reports and result[5] == FAKE_DATA.recent_errors)
-check("6 자료 유무 비율은 %로", "4.5%" in result[1], result[1])
-check("7 응답 시간은 ms, 원화 합계는 원으로", "1159.1 ms" in result[2] and "1542.73원" in result[2], result[2])
+check("5 on_refresh → tuple 6개", isinstance(result, tuple) and len(result) == 6, len(result))
+check("6 표 4개는 get_dashboard_data() 값 그대로", result[0] == FAKE_DATA.top_questions and result[3] == FAKE_DATA.usage_by_flow and result[4] == FAKE_DATA.reports and result[5] == FAKE_DATA.recent_errors)
+check("7 자료 유무 비율은 %로", "4.5%" in result[1], result[1])
+check("8 응답 시간은 ms, 원화 합계는 원으로", "1159.1 ms" in result[2] and "1542.73원" in result[2], result[2])
 
 
 def broken_get_dashboard_data():
@@ -89,9 +100,9 @@ def broken_get_dashboard_data():
 admin_view.get_dashboard_data = broken_get_dashboard_data
 try:
 	on_refresh()
-	check("8 에러 나면 safe_call이 gr.Error로 바꿈", False)
+	check("9 에러 나면 safe_call이 gr.Error로 바꿈", False)
 except gr.Error as e:
-	check("8 에러 나면 safe_call이 gr.Error로 바꿈", True, e.message)
+	check("9 에러 나면 safe_call이 gr.Error로 바꿈", True, e.message)
 admin_view.get_dashboard_data = fake_get_dashboard_data
 
 print(f"\n통과 {passed}/{total}")
