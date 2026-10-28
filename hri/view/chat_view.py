@@ -79,10 +79,13 @@ def _suggest_updates(suggestions: list[str]) -> list:
 def build_chat_tab():
 	"""질의응답 탭 화면을 만든다. (gr.Blocks의 gr.Tabs 안에서 호출)
 
-	왼쪽: 대화창(gr.Chatbot)·질문 입력칸·전송 버튼·출처·추천 질문 버튼 3개·용어 버튼 3개·용어 설명.
-	오른쪽: 페르소나(입문자/실무자/전문가)·보고서 선택(여러 개 가능)·검색 옵션(k, MMR).
-	추천 질문·용어·👍/👎 버튼은 숨겨 두고, 답변이 끝난 뒤 respond_stream()이 추천 질문 버튼을 보여 준다.
-	용어·피드백 버튼은 on_term_click(류현수)·on_feedback(임세준)이 연결될 때 보이게 한다.
+	화면을 반으로 나눈다.
+	- 왼쪽 반(챗봇): 맨 위에 페르소나(입문자/실무자/전문가)·보고서 선택(여러 개 가능)·검색 옵션(k, MMR),
+	  그 아래에 대화창(gr.Chatbot)·질문 입력칸·전송 버튼·출처·추천 질문 버튼 3개.
+	- 오른쪽 반(용어 검색): 눌러서 접고 펼치는 '용어 검색' 메뉴(gr.Accordion). 안의 검색 창은
+	  build_term_panel(류현수)이 들어오면 이 메뉴 안에서 부른다.
+	추천 질문·👍/👎 버튼은 숨겨 두고, 답변이 끝난 뒤 respond_stream()이 추천 질문 버튼을 보여 준다.
+	피드백 버튼은 on_feedback(임세준)이 연결될 때 보이게 한다.
 	탭은 로그인 전에는 숨겨 둔 채(visible=False) 만들고, 로그인하면 on_login이 보이게 한다.
 	이벤트 연결은 gr.State가 필요해서 build_app()이 connect_chat_events(state)로 한다.
 
@@ -90,7 +93,14 @@ def build_chat_tab():
 	"""
 	with gr.Tab("질의응답", id=CHAT_TAB_ID, visible=False) as tab:
 		with gr.Row():
-			with gr.Column(scale=3):
+			# 왼쪽 반: 챗봇
+			with gr.Column(scale=1):
+				with gr.Row():
+					persona = gr.Radio(PERSONA_CHOICES, value=DEFAULT_PERSONA, label="페르소나", scale=2)
+					report_dropdown = gr.Dropdown(label="보고서 선택 (여러 개 가능)", choices=[], multiselect=True, scale=3)
+				with gr.Accordion("검색 옵션", open=False):
+					k = gr.Slider(1, 10, value=DEFAULT_K, step=1, label="가져올 근거 수 (k)")
+					use_mmr = gr.Checkbox(label="MMR 사용 (서로 다른 근거 고르기)", value=False)
 				chatbot = gr.Chatbot(label="질의응답", height=480)
 				with gr.Row():
 					message = gr.Textbox(
@@ -103,20 +113,15 @@ def build_chat_tab():
 				sources = gr.Markdown()
 				# 추천 질문: 처음에는 숨기고 답변이 끝나면 질문이 있는 만큼 보여 준다
 				suggest_buttons = [gr.Button(value="", visible=False) for _ in range(MAX_SUGGESTIONS)]
-				# 용어 버튼·설명: on_term_click(류현수)이 연결될 때 보이게 한다
-				term_buttons = [gr.Button(value="", visible=False) for _ in range(MAX_TERMS)]
-				term_card = gr.Markdown()
 				# 피드백: on_feedback(임세준)이 연결될 때 보이게 한다 (2차)
 				with gr.Row():
 					like_btn = gr.Button("👍", visible=False, scale=0)
 					dislike_btn = gr.Button("👎", visible=False, scale=0)
+			# 오른쪽 반: 용어 검색 (접고 펼치는 메뉴)
 			with gr.Column(scale=1):
-				persona = gr.Radio(PERSONA_CHOICES, value=DEFAULT_PERSONA, label="페르소나")
-				report_dropdown = gr.Dropdown(label="보고서 선택 (여러 개 가능)", choices=[], multiselect=True)
-				with gr.Accordion("검색 옵션", open=False):
-					k = gr.Slider(1, 10, value=DEFAULT_K, step=1, label="가져올 근거 수 (k)")
-					use_mmr = gr.Checkbox(label="MMR 사용 (서로 다른 근거 고르기)", value=False)
-				# 환율 패널: build_indicator_panel(류현수)이 들어오면 여기에 배치한다
+				with gr.Accordion("용어 검색", open=False) as term_menu:
+					# build_term_panel(류현수)이 들어오면 이 안에서 부르고, 아래 안내 문구는 지운다
+					gr.Markdown("용어 검색 기능을 준비 중입니다.")
 
 	chat_components.update(
 		tab=tab,
@@ -125,14 +130,13 @@ def build_chat_tab():
 		send_btn=send_btn,
 		sources=sources,
 		suggest_buttons=suggest_buttons,
-		term_buttons=term_buttons,
-		term_card=term_card,
 		like_btn=like_btn,
 		dislike_btn=dislike_btn,
 		persona=persona,
 		report_dropdown=report_dropdown,
 		k=k,
 		use_mmr=use_mmr,
+		term_menu=term_menu,
 	)
 	return tab
 
