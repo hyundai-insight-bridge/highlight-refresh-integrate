@@ -3,7 +3,7 @@
 질의응답 한 번의 기록(질문·답변·응답 시간·토큰·비용 등)을 qa_logs 테이블에 저장하고 조회하는 DAO.
 - insert_qa_log(): 기록 저장 (save_qa_log()가 개인정보를 가린 뒤 부름)
 - select_logs(): 기록 조회 (내 기록 화면·세션 복원에서 부름)
-- update_feedback(): 👍/👎 피드백 저장 (3.6.10에서 추가 예정)
+- update_feedback(): 답변별 👍/👎 피드백 저장 (질의응답 화면의 피드백 버튼에서 부름)
 """
 from typing import Optional
 
@@ -123,3 +123,40 @@ def select_logs(user_id: str, session_id: Optional[str] = None) -> list[QALog]:
 		logs.append(log)
 
 	return logs
+
+
+def update_feedback(log_id: int, feedback: int) -> int:
+	"""
+	피드백 저장하기 (👍/👎)
+
+	답변별 👍(1)/👎(-1) 값을 qa_logs.feedback에 UPDATE 한다.
+	- 어느 답변인지는 log_id(질문 기록 번호)로 찾는다 (on_feedback()이 state['last_log_id']를 넘겨줌)
+	- 이미 피드백이 있던 답변이면 새 값으로 바뀐다 (👍 → 👎)
+
+	순서
+	1. sql: 바꿀 SQL을 만든다 (값 자리는 %s로 비워 둠)
+	2. values: %s 자리에 순서대로 들어갈 값을 튜플로 만든다 (feedback, log_id 순서)
+	3. get_connection()으로 DB에 연결해서 실행하고 commit으로 저장한다
+	4. cursor.rowcount로 바뀐 줄 수를 받아서 돌려준다
+
+	- 1, -1이 아닌 값은 DB 제약 조건(ck_qa_logs_feedback)이 막아서 에러가 난다
+	- 없는 log_id이거나, 이미 같은 값이 저장돼 있으면 바뀐 줄이 없어서 0을 돌려준다
+
+	입력: log_id (질문 기록 번호), feedback (👍 1 / 👎 -1)
+	출력: int (바뀐 줄 수, 바뀌면 1)
+	"""
+	sql = """
+		UPDATE qa_logs
+		SET feedback = %s
+		WHERE log_id = %s
+	"""
+
+	values = (feedback, log_id)
+
+	with get_connection() as conn:
+		cursor = conn.cursor()
+		cursor.execute(sql, values)
+		conn.commit()
+		count = cursor.rowcount
+
+	return count
