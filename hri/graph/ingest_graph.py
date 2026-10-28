@@ -81,9 +81,8 @@ def load_text_node(state: IngestState) -> dict:
 	순서 (명세서 load_text_node 행, 함수는 모두 엄정현 pdf_loader)
 	1. load_pdf(file_path)     : 쪽마다 글자를 뽑는다. 글자가 없는 쪽은 is_scanned=True로 표시된다
 	2. clean_text(pages)       : 여러 쪽에 반복되는 머리말·꼬리말, 쪽 번호, 깨진 글자를 지운다
-	3. extract_report_meta(file_path, 정제 전 pages) : 제목·발행기관·발행일 dict를 만든다 (persist가 reports에 저장)
+	3. extract_report_meta(file_path, 정리한 pages) : 제목·발행기관·발행일 dict를 만든다 (persist가 reports에 저장)
 	   - 표지(첫 쪽)에서 제목·날짜를 찾으므로, 표지를 잘라 내기 전(find_body_start 전)의 pages를 넘긴다
-	   - clean_text()는 본문 머리말과 같은 표지 제목 줄도 지우므로 load_pdf() 결과(raw_pages)를 넘긴다
 	4. find_body_start(pages)  : 표지·목차를 잘라 내고 본문 시작 쪽부터 남긴다 → split 노드의 입력
 	5. 스캔본·빈 쪽마다 경고 1줄을 warnings에 넣는다 (업로드 결과 화면에 표시)
 
@@ -95,7 +94,7 @@ def load_text_node(state: IngestState) -> dict:
 	file_path = state["file_path"]
 	raw_pages = load_pdf(file_path)
 	cleaned = clean_text(raw_pages)
-	meta = extract_report_meta(file_path, raw_pages)
+	meta = extract_report_meta(file_path, cleaned)
 	body_pages = find_body_start(cleaned)
 
 	warnings = [SCANNED_PAGE_WARNING.format(page=page.page) for page in raw_pages if page.is_scanned]
@@ -307,10 +306,15 @@ def split_node(state: IngestState) -> dict:
 	return update
 
 
+# 요약에 실패한 표의 경고 (표 검수 경고 TABLE_WARNING과 같은 '쪽·캡션' 모양). message는 table_loader.SUMMARY_FAILED_MESSAGE
+TABLE_SUMMARY_WARNING = "{page}쪽 표 {caption}: {message} (원본 표로 검색합니다)"
+
+
 def _caption_and_summary(table: Table) -> str:
 	"""표·차트 청크의 검색용 글을 만든다: '캡션(줄바꿈)요약' (명세서: '캡션+요약').
 
-	캡션이 없으면 요약만 쓴다. TODO(확인 필요): 요약까지 없으면(요약 실패) 원본 마크다운을 쓴다. 명세서에 규칙이 없다.
+	캡션이 없으면 요약만 쓴다. 요약이 없으면(요약 실패) 원본 마크다운을 쓴다.
+	(명세서에 규칙이 없어 3.8.3에서 넣은 대비 → 10/28 결정: 요약 실패는 그 표만 summary=None, 원본으로 검색)
 	"""
 	parts = [p for p in (table.caption, table.summary) if p]
 	if not table.summary and table.markdown:
@@ -327,12 +331,14 @@ def summarize_tables_node(state: IngestState) -> dict:
 	- 돌려주는 키는 'summarized_tables'와 'chunks'다.
 	  'tables'로 돌려주면 operator.add 리듀서 때문에 같은 표가 두 번 쌓이므로 다른 키에 담는다.
 	- 표·차트가 0개면 LLM을 부르지 않고 그대로 통과한다 ({'summarized_tables': []}).
+	- 요약에 실패한 표(summary가 None)는 warnings에 TABLE_SUMMARY_WARNING을 넣어 업로드 결과 화면에 알린다 (10/28 결정).
+	  실패가 없으면 warnings 키를 돌려주지 않는다 (split_node와 같음).
 	"""
 	tables: list[Table] = state.get("tables") or []
 	if not tables:
 		return {"summarized_tables": []}
 
-	from hri.loader.table_loader import summarize_tables
+	from hri.loader.table_loader import SUMMARY_FAILED_MESSAGE, summarize_tables
 
 	summarized = summarize_tables(tables)
 	by_doc_id = {table.doc_id: table for table in summarized}
@@ -341,7 +347,14 @@ def summarize_tables_node(state: IngestState) -> dict:
 		if chunk.doc_id in by_doc_id else chunk
 		for chunk in state.get("chunks") or []
 	]
-	return {"summarized_tables": summarized, "chunks": chunks}
+	update = {"summarized_tables": summarized, "chunks": chunks}
+	warnings = [
+		TABLE_SUMMARY_WARNING.format(page=t.page, caption=t.caption or "(캡션 없음)", message=SUMMARY_FAILED_MESSAGE)
+		for t in summarized if not t.summary
+	]
+	if warnings:
+		update["warnings"] = warnings     # warnings는 operator.add 리듀서라 다른 노드 경고와 합쳐진다
+	return update
 
 
 def _page_count(state: IngestState) -> int:

@@ -62,6 +62,8 @@ class EcosQuery(BaseModel):
 	end: str = Field(description="조회 끝 시점. start와 같은 형식")
 	# 조회 이유: EcosChoice.reason을 그대로 옮긴다
 	reason: str = Field(default="", description="이 데이터를 조회하는 이유")
+	# 비교할 보고서 지표 이름: fetch_indicators(query, query.indicator_name)에 넘긴다 (류현수)
+	indicator_name: str = Field(default="", description="이 데이터와 비교할 보고서 지표 이름 (Indicator.name)")
 
 
 class TermCard(BaseModel):
