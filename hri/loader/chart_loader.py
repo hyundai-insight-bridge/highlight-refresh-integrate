@@ -406,11 +406,19 @@ def chart_to_table(chart: ChartImage, tokens: list[OcrToken]) -> ChartData:
 	])
 
 	# 4) Vision 호출 → ChartData
-	model = get_chat_model(model=vision_model, temperature=0, max_tokens=VISION_MAX_TOKENS).with_structured_output(ChartData)
-	try:
-		data = model.invoke([message])
-	except Exception as error:
-		raise ChartExtractError(f"{chart.page}쪽 차트: Vision 응답을 ChartData로 바꾸지 못함 ({error})") from error
+try:
+    model = get_chat_model(
+        model=vision_model,
+        temperature=0,
+        max_tokens=VISION_MAX_TOKENS
+    ).with_structured_output(ChartData)
+
+    data = model.invoke([message])
+
+except Exception as error:
+    raise ChartExtractError(
+        f"{chart.page}쪽 차트: Vision 응답을 ChartData로 바꾸지 못함 ({error})"
+    ) from error
 
 	# 표로 만들 내용이 없으면 실패로 본다 (빈 표가 저장·검색되지 않게)
 	if data is None or not data.x_labels or not data.series:
