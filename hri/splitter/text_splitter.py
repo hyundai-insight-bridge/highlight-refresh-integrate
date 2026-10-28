@@ -47,7 +47,8 @@ def split_sections(pages: list[Page]) -> list[Section]:
 			heading = _heading_title(line)
 			if heading is None:
 				if not line.strip():
-					lines.append("")
+					if lines:
+						lines.append("")
 					continue
 				if not lines and not title:
 					start_page = page.page
