@@ -1,18 +1,23 @@
-"""load_pdf()·clean_text()·find_body_start()가 명세대로 동작하는지 확인하는 테스트 (네트워크·DB·.env 없이 실행).
+"""load_pdf()·clean_text()·find_body_start()·extract_report_meta()가 명세대로 동작하는지 확인하는 테스트 (네트워크·DB·.env 없이 실행).
 
 load_pdf() 테스트용 PDF는 pymupdf로 tmp_path(pytest가 주는 임시 폴더)에 만든다.
 clean_text()·find_body_start()는 Page 목록을 직접 만들어 넣는다 (HRI 보고서 쪽 모양을 줄여서 흉내 냄).
 """
 
+from datetime import date
+
 import pymupdf
 
 from hri.domain.schemas import Page
-from hri.loader.pdf_loader import clean_text, find_body_start, load_pdf
+from hri.loader.pdf_loader import clean_text, extract_report_meta, find_body_start, load_pdf
 
 
 # 쪽마다 texts[i]를 써 넣은 PDF를 만든다. 빈 글자("")면 아무것도 안 쓴 빈 쪽 (스캔본 흉내)
-def make_pdf(path, texts):
+def make_pdf(path, texts, title=None):
 	doc = pymupdf.open()
+	# title: PDF 메타데이터 제목(/Title). None이면 비워 둔다 (HRI 37편처럼)
+	if title is not None:
+		doc.set_metadata({"title": title})
 	for text in texts:
 		page = doc.new_page(width=595, height=842)
 		if text:
@@ -197,3 +202,33 @@ def test_find_body_start_leader_without_toc_title():
 		Page(page=2, text="1. 개요\n본문"),
 	]
 	assert [p.page for p in find_body_start(pages)] == [2]
+
+
+# ---------------------------------------------------------------------
+# extract_report_meta()
+# ---------------------------------------------------------------------
+# [확인 19] HRI 표지: 메타데이터 제목이 비어 있으면 첫 쪽에서 찾는다.
+#           발간번호 줄을 건너뛰고 두 줄로 나뉜 제목을 부제('- …') 앞까지 붙이며, 날짜·발행기관(발간번호 줄)도 읽는다.
+#           정제 전 pages를 넘긴다 (clean_text()는 본문 머리말과 같은 표지 제목 줄을 지움)
+def test_extract_report_meta_hri_cover(tmp_path):
+	cover = "26-07(통권 1008호) 2026.04.30\n미-이란 전쟁 이후의 경제 전략을 생각하며\n(2026년 수정 경제 전망)\n- 2026년 경제성장률 2.7%"
+	body = "미-이란 전쟁 이후의 경제 전략을 생각하며\n1\n1. 개요\n본문"
+	path = make_pdf(tmp_path / "upload.pdf", [cover, body, body.replace("\n1\n", "\n2\n")])
+
+	meta = extract_report_meta(path, load_pdf(path))
+
+	assert meta == {
+		"title": "미-이란 전쟁 이후의 경제 전략을 생각하며 (2026년 수정 경제 전망)",
+		"publisher": "현대경제연구원",
+		"published_date": date(2026, 4, 30),
+	}
+
+
+# [확인 20] HRI가 아닌 보고서: 메타데이터 제목이 있으면 그것을 쓰고, 발행기관·발행일을 못 찾으면 None.
+#           메타데이터 제목이 파일 이름('….png')이고 첫 쪽에 글자가 없으면 파일 이름(확장자 뺀 이름)을 제목으로 쓴다
+def test_extract_report_meta_other_publisher(tmp_path):
+	path = make_pdf(tmp_path / "kdi.pdf", ["경제동향 2026년 10월호\n본문"], title="KDI 경제동향")
+	assert extract_report_meta(path, load_pdf(path)) == {"title": "KDI 경제동향", "publisher": None, "published_date": None}
+
+	path = make_pdf(tmp_path / "스캔 보고서.pdf", [""], title="684314165.png (4468×4144)")
+	assert extract_report_meta(path, load_pdf(path)) == {"title": "스캔 보고서", "publisher": None, "published_date": None}
