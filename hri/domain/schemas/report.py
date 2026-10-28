@@ -106,7 +106,7 @@ class Table(BaseModel):
 	report_id: int | None = Field(default=None, description="insert_report() 뒤에 채움")
 	page: int = Field(ge=1, description="표·차트가 있는 쪽, 1부터")
 	caption: str | None = Field(default=None, description="표 제목. 예) < 주요국 경제성장률 전망 >. 큰 표를 나누면 '(1/n)'을 붙임")
-	rows: list[list[str]] = Field(default_factory=list, description="머리글 행 + 본문 행 (DB에는 저장 안 함)")
+	rows: list[list[str | None]] = Field(default_factory=list, description="머리글 행 + 본문 행. 병합된 칸 자리는 None(pdfplumber 그대로, validate_table이 병합 의심 칸으로 셈). DB에는 저장 안 함")
 	markdown: str = Field(default="", description="table_to_markdown() 결과, 답변용 원본")
 	summary: str | None = Field(default=None, description="검색에 쓰는 1~2문장 요약 (summarize_tables), 표·차트 청크의 text가 됨")
 	source_type: Literal["table", "chart"] = "table"

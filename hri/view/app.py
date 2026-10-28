@@ -15,7 +15,7 @@ from hri.view.report_view import build_upload_tab, build_report_list_panel, on_v
 from hri.view.summary_view import build_summary_tab, summary_components
 from hri.view.chat_view import build_chat_tab, chat_components, connect_chat_events
 from hri.view.indicator_view import on_compare
-from hri.view.history_view import build_history_tab
+from hri.view.history_view import build_history_tab, history_components, on_restore
 from hri.view.admin_view import build_admin_tab
 
 
@@ -127,6 +127,13 @@ def build_app():
 			inputs=state,
 			outputs=[tabs, summary_components["report_dropdown"]]
 		)
+		
+		# 대화 이어가기 버튼 누르면 질의응답 탭 Chatbot에 이전 대화 채우기
+		history_components["restore_btn"].click(
+			fn=on_restore,
+			inputs=[history_components["session_dropdown"], state],
+			outputs=[chat_components["chatbot"], state]
+		)		
 
 		# 질의응답으로 이동 버튼 누르면 질의응답 탭으로
 		go_chat_btn.click(
