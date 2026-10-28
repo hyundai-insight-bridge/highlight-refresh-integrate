@@ -1,7 +1,8 @@
-"""보고서 저장·조회 · insert_report, insert_sections, insert_chunks, select_sections, select_summary_json, update_summary_json, get_context_docs (김희진) / insert_tables (엄정현) / select_reports (장유빈)"""
+"""보고서 저장·조회 · insert_report, insert_sections, insert_chunks, select_sections, select_summary_json, update_summary_json, get_context_docs (김희진) / insert_tables (엄정현) / select_reports, select_report_tables (장유빈)"""
+
 import json
 from hri.dao.db import get_connection
-from hri.domain.schemas import Chunk, ContextDoc, Report, ReportSummary, Section
+from hri.domain.schemas import Chunk, ContextDoc, Report, ReportSummary, Section, Table
 from hri.config.settings import load_settings
 from pymysql.connections import Connection
 from pydantic import ValidationError
@@ -33,6 +34,29 @@ def select_reports(keyword: str) -> list[Report]:
 			cur.execute(sql, (pattern, pattern))
 			rows = cur.fetchall()
 	return [Report(**row) for row in rows]
+
+
+# -- select_report_tables (장유빈)
+def select_report_tables(report_id: int) -> list[Table]:
+	"""report_id 보고서의 표·차트 원본을 페이지 순으로 조회한다.
+
+	report_tables에서 읽고, DB 칸 ocr_confidence는 Table.confidence로 이름을 바꿔 담는다.
+	같은 쪽에 여러 개면 doc_id 순이다. rows(행 목록)는 DB에 저장하지 않으므로 빈 리스트다.
+	get_report_text()가 섹션 원문 사이에 표·차트 마크다운을 끼워 넣을 때 사용한다. 없으면 빈 목록.
+	"""
+	sql = """
+		SELECT doc_id, report_id, page, caption, markdown, summary, source_type,
+		       image_path, ocr_confidence AS confidence, needs_review
+		FROM report_tables
+		WHERE report_id = %s
+		ORDER BY page, doc_id
+	"""
+	with get_connection() as conn:
+		with conn.cursor() as cur:
+			cur.execute(sql, (report_id,))
+			rows = cur.fetchall()
+	return [Table(**row) for row in rows]
+
 
 # insert_report, insert_sections, insert_chunks (김희진)
 DEFAULT_PUBLISHER = "현대경제연구원"
