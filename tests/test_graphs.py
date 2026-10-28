@@ -44,6 +44,7 @@ from hri.graph.qa_graph import (
 	save_log_node,
 )
 from hri.graph.visualize import draw_graphs
+from tests.fakes import FakeIngestStore, install_ingest_store
 
 GETTERS = [registry.get_ingest_graph, registry.get_qa_graph, registry.get_summary_graph, registry.get_agent_graph]
 
@@ -341,9 +342,13 @@ def make_pdf(path, page_count=1, password=None):
 
 
 # [확인 10] 업로드 정상: 진짜 PDF면 validate가 {'error': None}을 내고, 8개 노드가 모두 실행되며 split은 세 갈래가 끝난 뒤 한 번만 실행
-def test_ingest_runs_all_nodes(document_service, tmp_path):
+def test_ingest_runs_all_nodes(document_service, tmp_path, monkeypatch):
+	# split·persist 노드(3.8.3)가 부르는 설정·DB·Chroma는 가짜로 바꿔 끼운다
+	install_ingest_store(monkeypatch, FakeIngestStore())
 	path = make_pdf(tmp_path / "report.pdf", page_count=3)
-	updates = list(registry.get_ingest_graph().stream({"file_path": path, "user_id": "tester"}, stream_mode="updates"))
+	# load_text 노드가 아직 가짜(3.8.2)라 meta를 채우지 않으므로, load_text가 줄 meta를 입력으로 대신 넣는다
+	inputs = {"file_path": path, "user_id": "tester", "meta": {"title": "테스트 보고서"}}
+	updates = list(registry.get_ingest_graph().stream(inputs, stream_mode="updates"))
 	nodes = [name for update in updates for name in update]
 
 	assert updates[0] == {"validate": {"error": None}}
