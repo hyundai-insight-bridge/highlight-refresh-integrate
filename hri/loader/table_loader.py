@@ -53,7 +53,7 @@ def table_to_markdown(rows: list[list[str | None]]) -> str:
 
 
 def split_big_table(
-	rows: list[list[str]],
+	rows: list[list[str]] | None,
 	max_rows: int = MAX_TABLE_ROWS,
 	header_rows: int = 1,
 ) -> list[list[list[str]]]:
