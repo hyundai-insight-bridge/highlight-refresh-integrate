@@ -4,13 +4,27 @@
 - get_dashboard_data(): 대시보드 1차 숫자를 모아 화면 형식(마크다운 표)으로 가공 (3.7.8)
 - build_admin_tab(): 사용 현황·답변 품질·성능 비용·문서 관리·운영 상태 화면과 새로고침 버튼 배치 (3.7.9)
 - on_refresh(): 새로고침 버튼을 누르면 get_dashboard_data() 결과로 화면을 갱신 (3.7.9)
+- plot_daily_counts(): 일별 질문 수·평균 응답 시간 선 그래프를 PNG로 저장 (3.7.11)
+- get_dashboard_data_v2(): 1차 데이터에 일별 추이 차트·페르소나 비율·피드백 비율·근거 없는 질문 목록을 더해 가공 (3.7.11)
 """
+import uuid
+
 import gradio as gr
 
-from hri.dao.dashboard_dao import select_perf_cost, select_recent_errors, select_source_ratio, select_top_questions
+from hri.dao.dashboard_dao import (
+	select_daily_counts,
+	select_feedback_ratio,
+	select_no_source_questions,
+	select_perf_cost,
+	select_persona_ratio,
+	select_recent_errors,
+	select_source_ratio,
+	select_top_questions
+)
 from hri.domain.schemas import DashboardData
 from hri.llm.llm_client import cost_korean_won, get_usd_krw
 from hri.loader.table_loader import table_to_markdown
+from hri.service.indicator_service import PLOT_DIR, _use_korean_font
 from hri.service.report_service import search_reports
 from hri.util.logger import safe_call
 
@@ -198,3 +212,135 @@ def on_refresh():
 		data.reports,
 		data.recent_errors
 	)
+
+
+def plot_daily_counts(rows: list[dict]) -> str:
+	"""
+	일별 추이 차트 그리기
+
+	matplotlib 선 그래프로 일별 질문 수와 평균 응답 시간을 그려 PNG로 저장한다.
+
+	순서
+	1. rows를 날짜(가로축)·질문 수·평균 응답 시간 리스트로 나눈다
+	   (평균 응답 시간이 None인 날은 float("nan")으로 바꿔 그 날만 선을 끊어서 그린다)
+	2. 한글 글꼴을 정한다 (장유빈 님 _use_korean_font() 재사용, 못 찾으면 기본 글꼴)
+	3. 왼쪽 세로축에 질문 수(건), 오른쪽 세로축(twinx)에 평균 응답 시간(ms)을 선으로 그린다
+	   (단위가 달라서 세로축을 2개로 나눔, 범례는 선과 겹치지 않게 그래프 바깥 위쪽에 둠)
+	4. data/plots/에 daily_uuid.png로 저장하고 그림을 닫는다 (지표 비교 차트와 같은 폴더)
+
+	- 화면 없는 서버에서도 그릴 수 있게 matplotlib.use("Agg")를 쓴다
+	- 기록이 없을 때는 부르지 않는다 (get_dashboard_data_v2()가 rows가 있을 때만 부름)
+
+	입력: rows (select_daily_counts() 결과, 예: [{'day': date(2026, 10, 27), 'question_count': 2, 'avg_response_ms': 1500.0}, ...])
+	출력: str (저장한 PNG 파일 경로)
+	"""
+	import matplotlib
+
+	matplotlib.use("Agg")
+	import matplotlib.pyplot as plt
+
+	# 1) 가로축(날짜)·세로축(질문 수, 평균 응답 시간) 값 나누기
+	days = []
+	counts = []
+	avg_ms = []
+	for row in rows:
+		days.append(str(row["day"]))
+		counts.append(row["question_count"])
+		if row["avg_response_ms"] == None:
+			avg_ms.append(float("nan"))
+		else:
+			avg_ms.append(row["avg_response_ms"])
+
+	# 2) 한글 글꼴 (못 찾으면 기본 글꼴)
+	font = _use_korean_font()
+	if font != None:
+		plt.rcParams["font.family"] = font
+	plt.rcParams["axes.unicode_minus"] = False
+
+	# 3) 선 그래프 그리기 (왼쪽 축: 질문 수, 오른쪽 축: 평균 응답 시간)
+	fig, ax1 = plt.subplots(figsize=(8, 4), layout="constrained")
+	ax1.plot(days, counts, marker="o", color="C0", label="질문 수")
+	ax1.set_xlabel("날짜")
+	ax1.set_ylabel("질문 수 (건)")
+	ax1.tick_params(axis="x", rotation=45)
+
+	ax2 = ax1.twinx()
+	ax2.plot(days, avg_ms, marker="s", color="C1", label="평균 응답 시간")
+	ax2.set_ylabel("평균 응답 시간 (ms)")
+
+	fig.suptitle("일별 질문 수·평균 응답 시간")
+	fig.legend(loc="outside upper right", ncol=2)
+
+	# 4) PNG로 저장하고 그림 닫기
+	PLOT_DIR.mkdir(parents=True, exist_ok=True)
+	path = PLOT_DIR / f"daily_{uuid.uuid4().hex}.png"
+	fig.savefig(path, dpi=150)
+	plt.close(fig)
+
+	return str(path)
+
+
+def get_dashboard_data_v2() -> DashboardData:
+	"""
+	대시보드 2차 데이터 만들기
+
+	일별 질문 수, 페르소나별 사용 비율, 피드백 비율, 근거 없는 질문 목록을 대시보드 화면 형식에 맞게 가공한다.
+	(잡담[chat]·오류[error]는 qa_logs.route로 답변 품질 통계에서 제외)
+
+	순서
+	1. get_dashboard_data()로 1차 데이터를 만든다 (DashboardData 하나에 1차·2차를 함께 담으려고)
+	2. 일별 질문 수: 기록이 있으면 plot_daily_counts()로 추이 차트를 그려 경로를 담는다 (없으면 None)
+	3. 페르소나별 사용 비율: [페르소나, 질문 수, 비율] 표 (맨 아래 ROLLUP 합계 줄은 '합계')
+	4. 피드백 비율: [구분, 건수, 비율] 표 (👍·👎·합계)
+	5. 근거 없는 질문 목록: [질문, '자료에 없습니다' 횟수] 표
+
+	- 잡담·오류 제외: 답변 품질 통계(피드백 비율·근거 없는 질문)는 SQL에서 이미 rag·no_answer만 센다
+	  페르소나별 사용 비율은 사용 현황이라 모든 질문을 센다
+	- 비율은 %로, 소수 첫째 자리까지 보여 준다
+	- 기록이 없으면 표는 머리글만, 차트는 None
+
+	입력: 없음
+	출력: DashboardData (1차 칸 + 2차 칸)
+	"""
+	# 1) 1차 데이터
+	data = get_dashboard_data()
+
+	# 2) 일별 질문 수 → 추이 차트 (기록이 있을 때만)
+	daily_rows = select_daily_counts()
+	if len(daily_rows) > 0:
+		data.daily_chart = plot_daily_counts(daily_rows)
+
+	# 3) 페르소나별 사용 비율 (맨 아래 줄이 합계)
+	persona_rows = select_persona_ratio()
+
+	total = 0
+	for row in persona_rows:
+		if row["persona"] == None:
+			total = row["count"]
+
+	persona_table = [["페르소나", "질문 수", "비율"]]
+	for row in persona_rows:
+		if row["persona"] == None:
+			persona_table.append(["합계", row["count"], ""])
+		else:
+			ratio = round(row["count"] / total * 100, 1)
+			persona_table.append([row["persona"], row["count"], f"{ratio}%"])
+	data.persona_ratio = table_to_markdown(persona_table)
+
+	# 4) 피드백 비율 (피드백이 있을 때만 줄 추가)
+	feedback = select_feedback_ratio()
+
+	feedback_table = [["구분", "건수", "비율"]]
+	if feedback["total"] > 0:
+		feedback_table.append(["👍", feedback["up_count"], f"{round(feedback['up_ratio'] * 100, 1)}%"])
+		feedback_table.append(["👎", feedback["down_count"], f"{round(feedback['down_ratio'] * 100, 1)}%"])
+		feedback_table.append(["합계", feedback["total"], ""])
+	data.feedback_ratio = table_to_markdown(feedback_table)
+
+	# 5) 근거 없는 질문 목록
+	no_source_table = [["질문", "'자료에 없습니다' 횟수"]]
+	for row in select_no_source_questions():
+		no_source_table.append([row["question"], row["count"]])
+	data.no_source_questions = table_to_markdown(no_source_table)
+
+	return data

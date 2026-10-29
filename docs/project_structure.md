@@ -36,7 +36,6 @@
 | `prompt` | 프롬프트 구성 | `rag_prompt`, `summary_prompt`, `persona_prompt` |
 | `memory` | 대화 기록 줄이기·질문 다시 쓰기 | `history_store` |
 | `source` | 출처 정리 | `source_formatter` |
-| `suggest` | 추천 질문·용어 추출 | `suggest_service` |
 | `router` | Tool Calling 도구 목록·에이전트 실행 | `tool_router` |
 | `llm` | LLM 모델 생성·호출·비용 계산 | `llm_client` |
 | `api` | 외부 API (ECOS·수출입은행·국립국어원) | `ecos_client`, `exchange_client`, `stdict_client`, `ecos_finder` |
@@ -108,8 +107,6 @@ highlight-refresh-integrate/
 │  │  └─ history_store.py                  # trim_history(), rewrite_question()
 │  ├─ source/
 │  │  └─ source_formatter.py               # format_sources()
-│  ├─ suggest/
-│  │  └─ suggest_service.py                # suggest_questions()
 │  ├─ router/
 │  │  └─ tool_router.py                    # TOOLS, run_agent_with_tools()
 │  ├─ llm/
@@ -229,7 +226,7 @@ highlight-refresh-integrate/
 
 | 담당 | 모듈 (`hri/` 생략) |
 |---|---|
-| 류현수 | `api/exchange_client`, `api/stdict_client`, `api/ecos_finder`, `service/term_service`, `dao/term_dao`, `view/term_view`, `view/indicator_view.build_indicator_panel`, `view/chat_view.on_suggest_click`·`on_term_click`·`on_feedback`, `dao/qa_log_dao.update_feedback`, `suggest/suggest_service`, `tests/sample_pdf`(삭제 예정) |
+| 류현수 | `api/exchange_client`, `api/stdict_client`, `api/ecos_finder`, `service/term_service`, `dao/term_dao`, `view/term_view`, `view/indicator_view.build_indicator_panel`, `view/chat_view.on_suggest_click`·`on_term_click`·`on_feedback`, `dao/qa_log_dao.update_feedback`, `tests/sample_pdf`(삭제 예정) |
 | 서동안 | `service/qa_service.validate_question`·`mask_pii`, `prompt/persona_prompt`, `llm/llm_client.get_chat_model`·`ask_llm`·`chat_bot`, `domain/schemas/qa` |
 | 김희진 | `view/report_view.build_upload_tab`·`on_upload`, `view/summary_view`, `service/document_service.upload_report`, `service/summary_service`, `splitter/text_splitter`, `vector_store/*`, `dao/report_dao.insert_report`·`insert_sections`·`insert_chunks`·`select_sections`·`update_summary_json`·`get_context_docs`, `retriever/search.extract_keywords`·`keyword_find`, `prompt/summary_prompt`, `router/tool_router`, `domain/schemas/summary` |
 | 엄정현 | `loader/*`, `service/document_service.validate_pdf`, `dao/report_dao.insert_tables`, `api/ecos_client`, `graph/*`, `domain/schemas/report`·`external`·`graph_state`, `tests/fakes`, `tests/test_graphs` |

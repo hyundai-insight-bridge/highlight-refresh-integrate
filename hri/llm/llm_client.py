@@ -120,7 +120,7 @@ def get_usd_krw() -> float:
 
 	아래 순서로 환율을 가져오고, 먼저 성공한 값을 쓴다.
 	1. 한국수출입은행 API (get_exchange_rate) - 매매기준율, 그날 값이 없으면 전날로 거슬러 올라감
-	2. 한국은행 ECOS API (get_ecos_exchange_rate) - 하루 단위 기준 환율
+	2. 한국은행 ECOS API (get_exchange_rates) - 하루 단위 기준 환율, 주말·공휴일이면 최근 영업일 값
 	3. 둘 다 실패하면 기본 환율 1,400원
 
 	- 토큰 비용은 실시간에 가까운 한국수출입은행 환율을 먼저 쓴다.
@@ -140,12 +140,12 @@ def get_usd_krw() -> float:
 	except Exception:
 		pass
 
-	# 2) 한국은행 ECOS 환율
+	# 2) 한국은행 ECOS 환율 (통화 목록을 넘기면 통화별 환율 리스트를 돌려줌)
 	try:
-		from hri.api.ecos_client import get_ecos_exchange_rate
+		from hri.api.ecos_client import get_exchange_rates
 
-		rate = get_ecos_exchange_rate("USD")
-		usd_krw = float(rate.value)
+		rates = get_exchange_rates(["USD"])
+		usd_krw = rates[0].value
 		return usd_krw
 	except Exception:
 		pass
