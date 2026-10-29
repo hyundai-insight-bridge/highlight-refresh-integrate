@@ -1,4 +1,4 @@
-"""질의응답 흐름 · build_qa_graph, route_question, route_after_grade, generate_node, no_answer_node, error_reply_node, chat_node, save_log_node (엄정현)
+"""질의응답 흐름 · build_qa_graph, route_question, route_after_grade, generate_node, no_answer_node, error_reply_node, chat_node, save_log_node (엄정현) / validate_node, rewrite_node, retrieve_node, sources_node (류현수)
 
 [3.8.4] 그래프 구성·분기(build_qa_graph·route_question·route_after_grade)와 체크포인터 연결을 명세대로 채웠다.
 [3.8.5] 답을 만드는 노드(generate·no_answer·error_reply·chat)와 기록 노드(save_log)를 채웠다.
@@ -6,8 +6,13 @@
 	  {'answer': 답변, 'has_source': 근거 유무, 'route': 최종 경로, 'messages': [이번 질문, 이번 답변]}
 	  messages는 add_messages 리듀서로 체크포인터의 대화 기록 끝에 붙는다 (다음 질문 때 이전 대화로 쓰임).
 	- save_log는 어느 갈래로 끝나든 마지막에 한 번 실행되어 질문 기록(qa_logs)과 LLM 사용량(llm_usage)을 저장한다.
-나머지 노드(validate·rewrite·retrieve·grade·sources·suggest)는 아직 가짜({} 반환)다.
-각 함수(validate_question·rewrite_question·hybrid_search·format_sources·suggest_questions)가 들어오면 연결한다.
+검색 흐름 노드(validate·rewrite·retrieve·sources)를 채웠다.
+	- validate: validate_question·mask_pii (서동안 qa_service)
+	- rewrite: rewrite_question (장유빈 history_store)
+	- retrieve: hybrid_search (장유빈 search)
+	- sources: format_sources (장유빈 source_formatter)
+grade는 분기 함수 route_after_grade가 has_context()로 판단하므로 가짜({} 반환) 노드로 둔다.
+suggest는 후속 추천 질문 제거 전까지 가짜 노드로 둔다.
 
 흐름 (LangGraph 워크플로우 명세서 build_qa_graph 행)
 	START → validate → route_question
@@ -19,6 +24,7 @@
 compile(checkpointer=get_checkpointer())은 registry.get_qa_graph()가 한 번만 한다 (thread_id = session_id).
 """
 
+import logging
 import re
 from datetime import datetime
 from typing import Literal
@@ -29,6 +35,8 @@ from langgraph.graph import END, START, StateGraph
 
 from hri.domain.schemas import LlmUsage, QALog, QAState, RouteDecision
 from hri.prompt.rag_prompt import has_context
+
+logger = logging.getLogger(__name__)
 
 # 인사·감사·잡담 정규식 (명세서: '인사·감사·잡담 정규식(GREETING_RE)에 걸리면 chat')
 # 질문 '전체'가 아래 표현(여러 개 이어져도 됨)과 문장부호로만 되어 있을 때만 'chat'이다.
@@ -74,7 +82,7 @@ NO_ANSWER_TEXT = "자료에 없습니다"
 
 
 def _skeleton_node(state: QAState) -> dict:
-	"""뼈대용 가짜 노드: state를 바꾸지 않는다. 아직 함수가 연결되지 않은 노드(validate·rewrite·retrieve·grade·sources·suggest)가 쓴다."""
+	"""뼈대용 가짜 노드: state를 바꾸지 않는다. 함수를 연결하지 않는 노드(grade·suggest)가 쓴다."""
 	return {}
 
 
@@ -93,6 +101,57 @@ def _reply(state: QAState, answer: str, route: str, has_source: bool) -> dict:
 		"route": route,
 		"messages": [HumanMessage(state["question"]), AIMessage(answer)],
 	}
+
+def validate_node(state: QAState) -> dict:
+	"""[검증 노드] 질문을 검사하고, 통과하면 개인정보를 가린 질문으로 바꾼다.
+
+	1. validate_question(질문): 빈 입력·공백만·최대 길이 초과면 InvalidInputError (서동안 qa_service)
+	   → {'error': 안내 문구}. route_question이 error_reply로 보낸다.
+	2. 통과하면 mask_pii(앞뒤 공백을 뗀 질문) → {'question': 가린 질문, 'error': None}
+	   이후 노드(rewrite·retrieve·generate·save_log)는 가린 질문을 쓴다.
+	qa_service는 함수 안에서 import한다 (그래프 파일 import 때 서비스 모듈을 불러오지 않으려고).
+	"""
+	from hri.exception.errors import InvalidInputError
+	from hri.service.qa_service import mask_pii, validate_question
+
+	try:
+		question = validate_question(state.get("question") or "")
+	except InvalidInputError as error:
+		return {"error": str(error)}
+	return {"question": mask_pii(question), "error": None}
+
+
+def rewrite_node(state: QAState) -> dict:
+	"""[다시 쓰기 노드] 이전 대화를 보고 후속 질문을 혼자서도 뜻이 통하는 질문으로 바꾼다.
+
+	rewrite_question(질문, state['messages'])를 부른다 (장유빈 history_store).
+	state['messages']는 체크포인터에 쌓인 지난 질문·답변이고 이번 질문은 아직 들어 있지 않다.
+	이전 대화가 없으면 rewrite_question이 LLM 없이 질문을 그대로 돌려준다.
+	돌려주는 값: {'rewritten': 다시 쓴 질문}
+	"""
+	from hri.memory.history_store import rewrite_question
+
+	return {"rewritten": rewrite_question(state["question"], state.get("messages") or [])}
+
+
+def retrieve_node(state: QAState) -> dict:
+	"""[검색 노드] 다시 쓴 질문으로 선택한 보고서에서 근거 청크를 찾는다.
+
+	hybrid_search(질문, k, report_ids, use_mmr)를 부른다 (장유빈 search).
+	- 질문: state['rewritten'] (비어 있으면 state['question'])
+	- report_ids가 비어 있으면 None으로 넘겨 전체 보고서에서 찾는다 (보고서를 고르지 않은 경우)
+	돌려주는 값: {'docs': 찾은 청크 목록} (없으면 빈 목록 → route_after_grade가 no_answer로 보낸다)
+	"""
+	from hri.retriever.search import hybrid_search
+
+	question = state.get("rewritten") or state["question"]
+	docs = hybrid_search(
+		question,
+		k=state["k"],
+		report_ids=state.get("report_ids") or None,
+		use_mmr=state["use_mmr"],
+	)
+	return {"docs": docs}
 
 
 def generate_node(state: QAState) -> dict:
@@ -122,6 +181,17 @@ def generate_node(state: QAState) -> dict:
 	update = _reply(state, response.content, route="rag", has_source=True)
 	update["context_docs"] = context_docs
 	return update
+
+
+def sources_node(state: QAState) -> dict:
+	"""[출처 노드] generate가 만든 답변 근거(context_docs)로 화면에 보여 줄 출처 목록을 만든다.
+
+	format_sources(state['context_docs'])를 부른다 (장유빈 source_formatter).
+	돌려주는 값: {'sources': [{report_id, report_title, page_start, page_end, kind, label, needs_review}, ...]}
+	"""
+	from hri.source.source_formatter import format_sources
+
+	return {"sources": format_sources(state.get("context_docs") or [])}
 
 
 def no_answer_node(state: QAState) -> dict:
@@ -166,6 +236,24 @@ def _total_tokens(usage: dict) -> int:
 	return total
 
 
+def _cost_krw(usage: dict) -> float:
+	"""질문 1건의 원화 비용. 사용량이 없으면 환율을 조회하지 않고 0원.
+
+	환율·단가를 못 구해도(.env MODEL_PRICES 누락 등) 질문 기록은 남기려고 로그만 남기고 0원으로 둔다.
+	(qa_logs.cost_krw는 NOT NULL DEFAULT 0 이라 None이 아니라 0.0을 돌려준다)
+	"""
+	if not usage:
+		return 0.0
+
+	from hri.llm.llm_client import cost_korean_won, get_usd_krw
+
+	try:
+		return cost_korean_won(usage, get_usd_krw())
+	except Exception:
+		logger.exception("질의응답 비용 계산 실패")
+		return 0.0
+
+
 def save_log_node(state: QAState, config: RunnableConfig) -> dict:
 	"""[기록 노드] 질문 1건의 기록(qa_logs)과 LLM 사용량(llm_usage)을 저장하고 {'log_id'}를 돌려준다.
 
@@ -180,6 +268,7 @@ def save_log_node(state: QAState, config: RunnableConfig) -> dict:
 	   - get_usd_krw()는 토큰 비용용 환율이다. 토큰 비용 환율은 한국수출입은행으로 확정했으므로
 	     이 노드는 ECOS 환율 함수를 직접 부르지 않는다.
 	   - LLM을 쓰지 않은 질문(근거 없음·입력 오류)은 사용량이 비어 있어 환율을 조회하지 않고 0원으로 둔다.
+	   - 환율·단가 오류로 비용 계산이 실패하면 로그만 남기고 0원으로 저장한다 (질문 기록·사용량 저장은 계속).
 	3. save_qa_log(QALog)로 qa_logs에 저장하고 log_id를 받는다 (임세준 history_service)
 	   - error 갈래면 state['error']가 QALog.error에 들어간다.
 	4. 모델마다 insert_usage(LlmUsage(flow='qa', ref_id=log_id, ...))로 llm_usage에 저장한다 (임세준 usage_dao)
@@ -188,7 +277,6 @@ def save_log_node(state: QAState, config: RunnableConfig) -> dict:
 	config는 LangGraph가 노드에 넘겨주는 실행 설정이다. session_id는 config['configurable']['thread_id']에서 읽는다.
 	"""
 	from hri.dao.usage_dao import insert_usage
-	from hri.llm.llm_client import cost_korean_won, get_usd_krw
 	from hri.service.history_service import save_qa_log
 
 	configurable = config.get("configurable", {})
@@ -200,7 +288,7 @@ def save_log_node(state: QAState, config: RunnableConfig) -> dict:
 	# 2) 토큰·원화 비용. TODO(확인 필요): usage 핸들러가 없으면(ask_stream이 넘기지 않은 경우) 사용량 0으로 기록한다.
 	handler = configurable.get("usage")
 	usage = dict(handler.usage_metadata) if handler is not None else {}
-	cost_krw = cost_korean_won(usage, get_usd_krw()) if usage else 0.0
+	cost_krw = _cost_krw(usage)
 
 	# 3) 질문 기록 저장
 	log = QALog(
@@ -283,15 +371,15 @@ def build_qa_graph() -> StateGraph:
 	graph = StateGraph(QAState)
 
 	# 노드 11개
-	graph.add_node("validate", _skeleton_node)
+	graph.add_node("validate", validate_node)
 	graph.add_node("chat", chat_node)
 	graph.add_node("error_reply", error_reply_node)
-	graph.add_node("rewrite", _skeleton_node)
-	graph.add_node("retrieve", _skeleton_node)
+	graph.add_node("rewrite", rewrite_node)
+	graph.add_node("retrieve", retrieve_node)
 	graph.add_node("grade", _skeleton_node)
 	graph.add_node("no_answer", no_answer_node)
 	graph.add_node("generate", generate_node)
-	graph.add_node("sources", _skeleton_node)
+	graph.add_node("sources", sources_node)
 	graph.add_node("suggest", _skeleton_node)
 	graph.add_node("save_log", save_log_node)
 

@@ -1,9 +1,9 @@
-"""질문 기록 · insert_qa_log, select_logs, update_feedback (임세준)
+"""질문 기록 · insert_qa_log, select_logs (임세준) / update_feedback (류현수)
 
 질의응답 한 번의 기록(질문·답변·응답 시간·토큰·비용 등)을 qa_logs 테이블에 저장하고 조회하는 DAO.
 - insert_qa_log(): 기록 저장 (save_qa_log()가 개인정보를 가린 뒤 부름)
 - select_logs(): 기록 조회 (내 기록 화면·세션 복원에서 부름)
-- update_feedback(): 👍/👎 피드백 저장 (3.6.10에서 추가 예정)
+- update_feedback(): 👍/👎 피드백 저장 (질의응답 탭 on_feedback()이 부름)
 """
 from typing import Optional
 
@@ -18,16 +18,28 @@ def insert_qa_log(log: QALog) -> int:
 	QALog에 담긴 값을 qa_logs 테이블에 INSERT 한다.
 	- log_id(번호)와 created_at(저장 시간)은 DB가 알아서 만든다
 	- feedback은 저장할 때는 비어 있고(NULL), 👍/👎를 누르면 update_feedback()이 채운다
+	- qa_logs.session_id는 chat_sessions(session_id)를 FK로 참조하므로,
+	  그 대화(세션) 줄이 chat_sessions에 없으면 먼저 만든다 (없으면 FK 위반으로 저장 실패)
 
 	순서
-	1. sql: 저장할 SQL을 만든다 (값 자리는 %s로 비워 둠)
-	2. values: %s 자리에 순서대로 들어갈 값을 튜플로 만든다
-	3. get_connection()으로 DB에 연결해서 실행하고 commit으로 저장한다
-	4. cursor.lastrowid로 방금 저장한 줄의 번호(log_id)를 받아서 돌려준다
+	1. session_sql: chat_sessions에 세션 줄을 만드는 SQL을 만든다
+	   (같은 대화의 두 번째 질문부터는 이미 줄이 있으므로 ON DUPLICATE KEY UPDATE로 아무것도 바꾸지 않고 넘어감)
+	2. sql: 저장할 SQL을 만든다 (값 자리는 %s로 비워 둠)
+	3. values: %s 자리에 순서대로 들어갈 값을 튜플로 만든다
+	4. get_connection()으로 DB에 연결해서 세션 줄 → 질문 기록 순서로 실행하고 commit으로 한 번에 저장한다
+	5. cursor.lastrowid로 방금 저장한 줄의 번호(log_id)를 받아서 돌려준다
 
 	입력: log (QALog)
 	출력: int (방금 저장한 기록 번호 log_id)
 	"""
+	# 1) 대화(세션) 줄이 없으면 만들기 (이미 있으면 그대로 둠)
+	session_sql = """
+		INSERT INTO chat_sessions (session_id, user_id)
+		VALUES (%s, %s)
+		ON DUPLICATE KEY UPDATE session_id = session_id
+	"""
+
+	# 2) 질문 기록 저장 SQL
 	sql = """
 		INSERT INTO qa_logs (
 			user_id, session_id, question, answer, persona, route,
@@ -36,6 +48,7 @@ def insert_qa_log(log: QALog) -> int:
 		VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 	"""
 
+	# 3) %s 자리에 들어갈 값
 	values = (
 		log.user_id,
 		log.session_id,
@@ -50,10 +63,14 @@ def insert_qa_log(log: QALog) -> int:
 		log.error
 	)
 
+	# 4) 세션 줄 → 질문 기록 순서로 실행하고 한 번에 저장
 	with get_connection() as conn:
 		cursor = conn.cursor()
+		cursor.execute(session_sql, (log.session_id, log.user_id))
 		cursor.execute(sql, values)
 		conn.commit()
+
+		# 5) 마지막에 실행한 qa_logs INSERT의 번호
 		log_id = cursor.lastrowid
 
 	return log_id
@@ -123,3 +140,30 @@ def select_logs(user_id: str, session_id: Optional[str] = None) -> list[QALog]:
 		logs.append(log)
 
 	return logs
+
+
+def update_feedback(log_id: int, feedback: int) -> bool:
+	"""
+	질문 기록에 👍/👎 피드백 저장하기 (류현수)
+
+	qa_logs의 log_id 줄에 feedback 값을 넣는다. 이미 값이 있으면 새 값으로 바꾼다 (👍 → 👎로 바꾸기 가능).
+	- feedback은 1(👍) 또는 -1(👎)만 받는다 (qa_logs CHECK 제약과 같음). 그 밖의 값은 ValueError
+
+	입력: log_id (질문 기록 번호), feedback (1 또는 -1)
+	출력: bool (그 번호의 기록이 있어서 저장했으면 True, 없으면 False)
+	"""
+	if feedback not in (1, -1):
+		raise ValueError(f"feedback은 1 또는 -1이어야 합니다: {feedback}")
+
+	sql = "UPDATE qa_logs SET feedback = %s WHERE log_id = %s"
+
+	with get_connection() as conn:
+		cursor = conn.cursor()
+		cursor.execute(sql, (feedback, log_id))
+		conn.commit()
+		# 같은 값으로 다시 저장하면 MySQL은 바뀐 줄 수를 0으로 알려 주므로, 기록이 있는지는 따로 확인한다
+		if cursor.rowcount == 0:
+			cursor.execute("SELECT 1 FROM qa_logs WHERE log_id = %s", (log_id,))
+			return cursor.fetchone() is not None
+
+	return True

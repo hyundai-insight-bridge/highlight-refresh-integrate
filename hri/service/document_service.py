@@ -9,6 +9,14 @@ from collections.abc import Iterator
 import pymupdf
 from langchain_core.callbacks import UsageMetadataCallbackHandler
 
+import logging
+from collections.abc import Iterator
+from langchain_core.callbacks import UsageMetadataCallbackHandler
+from hri.graph.registry import get_ingest_graph
+from hri.llm.llm_client import cost_korean_won, get_usd_krw
+from hri.dao.usage_dao import insert_usage
+from hri.domain.schemas import LlmUsage
+
 from hri.config.settings import load_settings
 from hri.dao.usage_dao import insert_usage
 from hri.domain.schemas import LlmUsage, ValidationResult
@@ -74,16 +82,25 @@ def validate_pdf(file_path: str) -> ValidationResult:
 
 # (김희진)
 
+def _cost_krw(model: str, tokens: dict) -> float | None:
+	"""모델 1개의 원화 비용.
+	환율·단가를 못 구해도(.env MODEL_PRICES가 null 등) 토큰 기록은 남기려고 None으로 둔다."""
+	try:
+		return cost_korean_won({model: tokens}, get_usd_krw())
+	except Exception:
+		logger.exception("업로드 비용 계산 실패: model=%s", model)
+		return None
+
 def _record_usage(usage: UsageMetadataCallbackHandler, user_id: str, report_id: int | None) -> None:
 	"""그래프에서 쓴 AI 사용량을 모델별로 llm_usage에 저장한다 (flow='ingest').
 	업로드 결과와 상관없이 쓴 비용은 남기려고 finally에서 부른다.
+	모델마다 따로 처리한다: 한 모델의 비용 계산·DB 저장이 실패해도 나머지 모델 기록은 남긴다.
 	여기서 나는 오류(환율 조회, DB)는 로그만 남기고 삼킨다: 이미 끝난 업로드를 오류처럼 보이게 하지 않으려고.
 	"""
 	if not usage.usage_metadata:
 		return
-	try:
-		usd_to_krw = get_usd_krw()
-		for model, tokens in usage.usage_metadata.items():
+	for model, tokens in usage.usage_metadata.items():
+		try:
 			insert_usage(LlmUsage(
 				flow="ingest",
 				user_id=user_id,
@@ -91,10 +108,10 @@ def _record_usage(usage: UsageMetadataCallbackHandler, user_id: str, report_id: 
 				model=model,
 				input_tokens=tokens.get("input_tokens", 0),
 				output_tokens=tokens.get("output_tokens", 0),
-				cost_krw=cost_korean_won({model: tokens}, usd_to_krw),
+				cost_krw=_cost_krw(model, tokens),
 			))
-	except Exception:
-		logger.exception("업로드 사용량 기록 실패: report_id=%s", report_id)
+		except Exception:
+			logger.exception("업로드 사용량 기록 실패: model=%s, report_id=%s", model, report_id)
 
 def upload_report(file_path: str, user_id: str) -> Iterator[dict]:
 	"""PDF를 업로드 그래프로 처리하며 진행 상황을 하나씩 내보낸다.
@@ -133,7 +150,7 @@ def upload_report(file_path: str, user_id: str) -> Iterator[dict]:
 					report_id = state["report_id"]
 					result = {"type": "result", "report_id": report_id, "counts": state.get("counts", {}), "warnings": warnings, "meta": meta, "page_count": page_count}
 		yield result or {"type": "error", "reason": "저장 단계까지 진행되지 않았습니다."}
-    
+
 	except Exception:
 		logger.exception("upload_report 실패: %s", file_path)
 		yield {"type": "error", "reason": "업로드 처리 중 오류가 발생했습니다."}
