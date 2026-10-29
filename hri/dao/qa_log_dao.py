@@ -1,9 +1,9 @@
-"""질문 기록 · insert_qa_log, select_logs, update_feedback (임세준)
+"""질문 기록 · insert_qa_log, select_logs (임세준) / update_feedback (류현수)
 
 질의응답 한 번의 기록(질문·답변·응답 시간·토큰·비용 등)을 qa_logs 테이블에 저장하고 조회하는 DAO.
 - insert_qa_log(): 기록 저장 (save_qa_log()가 개인정보를 가린 뒤 부름)
 - select_logs(): 기록 조회 (내 기록 화면·세션 복원에서 부름)
-- update_feedback(): 👍/👎 피드백 저장 (3.6.10에서 추가 예정)
+- update_feedback(): 👍/👎 피드백 저장 (질의응답 탭 on_feedback()이 부름)
 """
 from typing import Optional
 
@@ -123,3 +123,30 @@ def select_logs(user_id: str, session_id: Optional[str] = None) -> list[QALog]:
 		logs.append(log)
 
 	return logs
+
+
+def update_feedback(log_id: int, feedback: int) -> bool:
+	"""
+	질문 기록에 👍/👎 피드백 저장하기 (류현수)
+
+	qa_logs의 log_id 줄에 feedback 값을 넣는다. 이미 값이 있으면 새 값으로 바꾼다 (👍 → 👎로 바꾸기 가능).
+	- feedback은 1(👍) 또는 -1(👎)만 받는다 (qa_logs CHECK 제약과 같음). 그 밖의 값은 ValueError
+
+	입력: log_id (질문 기록 번호), feedback (1 또는 -1)
+	출력: bool (그 번호의 기록이 있어서 저장했으면 True, 없으면 False)
+	"""
+	if feedback not in (1, -1):
+		raise ValueError(f"feedback은 1 또는 -1이어야 합니다: {feedback}")
+
+	sql = "UPDATE qa_logs SET feedback = %s WHERE log_id = %s"
+
+	with get_connection() as conn:
+		cursor = conn.cursor()
+		cursor.execute(sql, (feedback, log_id))
+		conn.commit()
+		# 같은 값으로 다시 저장하면 MySQL은 바뀐 줄 수를 0으로 알려 주므로, 기록이 있는지는 따로 확인한다
+		if cursor.rowcount == 0:
+			cursor.execute("SELECT 1 FROM qa_logs WHERE log_id = %s", (log_id,))
+			return cursor.fetchone() is not None
+
+	return True
