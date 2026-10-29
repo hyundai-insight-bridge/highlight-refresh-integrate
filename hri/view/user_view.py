@@ -253,7 +253,8 @@ def on_register(user_id: str, password: str, name: str):
 		register(user_id, password, name)
 	except DuplicateUserError:
 		return "이미 사용 중인 아이디입니다."
-	except Exception:
+	except Exception as e:
+		print("회원가입 에러:", type(e).__name__, e)
 		return "회원가입에 실패했습니다. 다시 시도해주세요."
 
 	# 3) 성공
