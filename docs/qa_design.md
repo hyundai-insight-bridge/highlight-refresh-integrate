@@ -187,7 +187,7 @@ flowchart TD
 | 모델 | 필드 | 쓰임 |
 |---|---|---|
 | `AnswerResult` | question, answer, sources, suggestions, has_source, route, tokens, cost_krw, log_id | `ask_stream()`이 마지막에 넘기는 질문 1건의 결과. `log_id`는 👍/👎 피드백 저장에 사용 |
-| `SuggestOutput` | questions (정확히 3개) | `suggest_questions()`의 구조화 출력 |
+| `SuggestOutput` | questions (정확히 3개) | suggest 노드의 구조화 출력 |
 | `SearchHit` | chunk, score(= 1 − 거리), embedding | `vector_search()` 결과. `embedding`은 `mmr_select()`가 사용 |
 | `ContextDoc` | report_id, report_title, kind(`text`·`table`·`chart`), section_title, caption, page_start, page_end, text, needs_review | `format_docs()`·`format_sources()`의 입력 |
 
