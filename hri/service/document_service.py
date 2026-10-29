@@ -2,12 +2,20 @@
 
 # 엄정현 validate_pdf() 추가.
 
+import logging
 import os
+from collections.abc import Iterator
 
 import pymupdf
+from langchain_core.callbacks import UsageMetadataCallbackHandler
 
 from hri.config.settings import load_settings
-from hri.domain.schemas import ValidationResult
+from hri.dao.usage_dao import insert_usage
+from hri.domain.schemas import LlmUsage, ValidationResult
+from hri.graph.registry import get_ingest_graph
+from hri.llm.llm_client import cost_korean_won, get_usd_krw
+
+logger = logging.getLogger(__name__)
 
 def validate_pdf(file_path: str) -> ValidationResult:
 	"""업로드된 파일이 PDF로 처리할 수 있는지 확인한다.
@@ -65,15 +73,6 @@ def validate_pdf(file_path: str) -> ValidationResult:
 	return ValidationResult(ok=True)
 
 # (김희진)
-import logging
-from collections.abc import Iterator
-from langchain_core.callbacks import UsageMetadataCallbackHandler
-from hri.graph.registry import get_ingest_graph
-from hri.llm.llm_client import cost_korean_won, get_usd_krw
-from hri.dao.usage_dao import insert_usage
-from hri.domain.schemas import LlmUsage
-
-logger = logging.getLogger(__name__)
 
 def _record_usage(usage: UsageMetadataCallbackHandler, user_id: str, report_id: int | None) -> None:
 	"""그래프에서 쓴 AI 사용량을 모델별로 llm_usage에 저장한다 (flow='ingest').
