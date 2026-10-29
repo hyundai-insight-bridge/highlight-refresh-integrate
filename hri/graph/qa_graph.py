@@ -19,6 +19,7 @@
 compile(checkpointer=get_checkpointer())은 registry.get_qa_graph()가 한 번만 한다 (thread_id = session_id).
 """
 
+import logging
 import re
 from datetime import datetime
 from typing import Literal
@@ -29,6 +30,8 @@ from langgraph.graph import END, START, StateGraph
 
 from hri.domain.schemas import LlmUsage, QALog, QAState, RouteDecision
 from hri.prompt.rag_prompt import has_context
+
+logger = logging.getLogger(__name__)
 
 # 인사·감사·잡담 정규식 (명세서: '인사·감사·잡담 정규식(GREETING_RE)에 걸리면 chat')
 # 질문 '전체'가 아래 표현(여러 개 이어져도 됨)과 문장부호로만 되어 있을 때만 'chat'이다.
@@ -166,6 +169,24 @@ def _total_tokens(usage: dict) -> int:
 	return total
 
 
+def _cost_krw(usage: dict) -> float:
+	"""질문 1건의 원화 비용. 사용량이 없으면 환율을 조회하지 않고 0원.
+
+	환율·단가를 못 구해도(.env MODEL_PRICES 누락 등) 질문 기록은 남기려고 로그만 남기고 0원으로 둔다.
+	(qa_logs.cost_krw는 NOT NULL DEFAULT 0 이라 None이 아니라 0.0을 돌려준다)
+	"""
+	if not usage:
+		return 0.0
+
+	from hri.llm.llm_client import cost_korean_won, get_usd_krw
+
+	try:
+		return cost_korean_won(usage, get_usd_krw())
+	except Exception:
+		logger.exception("질의응답 비용 계산 실패")
+		return 0.0
+
+
 def save_log_node(state: QAState, config: RunnableConfig) -> dict:
 	"""[기록 노드] 질문 1건의 기록(qa_logs)과 LLM 사용량(llm_usage)을 저장하고 {'log_id'}를 돌려준다.
 
@@ -180,6 +201,7 @@ def save_log_node(state: QAState, config: RunnableConfig) -> dict:
 	   - get_usd_krw()는 토큰 비용용 환율이다. 토큰 비용 환율은 한국수출입은행으로 확정했으므로
 	     이 노드는 ECOS 환율 함수를 직접 부르지 않는다.
 	   - LLM을 쓰지 않은 질문(근거 없음·입력 오류)은 사용량이 비어 있어 환율을 조회하지 않고 0원으로 둔다.
+	   - 환율·단가 오류로 비용 계산이 실패하면 로그만 남기고 0원으로 저장한다 (질문 기록·사용량 저장은 계속).
 	3. save_qa_log(QALog)로 qa_logs에 저장하고 log_id를 받는다 (임세준 history_service)
 	   - error 갈래면 state['error']가 QALog.error에 들어간다.
 	4. 모델마다 insert_usage(LlmUsage(flow='qa', ref_id=log_id, ...))로 llm_usage에 저장한다 (임세준 usage_dao)
@@ -188,7 +210,6 @@ def save_log_node(state: QAState, config: RunnableConfig) -> dict:
 	config는 LangGraph가 노드에 넘겨주는 실행 설정이다. session_id는 config['configurable']['thread_id']에서 읽는다.
 	"""
 	from hri.dao.usage_dao import insert_usage
-	from hri.llm.llm_client import cost_korean_won, get_usd_krw
 	from hri.service.history_service import save_qa_log
 
 	configurable = config.get("configurable", {})
@@ -200,7 +221,7 @@ def save_log_node(state: QAState, config: RunnableConfig) -> dict:
 	# 2) 토큰·원화 비용. TODO(확인 필요): usage 핸들러가 없으면(ask_stream이 넘기지 않은 경우) 사용량 0으로 기록한다.
 	handler = configurable.get("usage")
 	usage = dict(handler.usage_metadata) if handler is not None else {}
-	cost_krw = cost_korean_won(usage, get_usd_krw()) if usage else 0.0
+	cost_krw = _cost_krw(usage)
 
 	# 3) 질문 기록 저장
 	log = QALog(
