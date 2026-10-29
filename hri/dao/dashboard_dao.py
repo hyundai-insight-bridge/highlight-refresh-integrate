@@ -238,6 +238,7 @@ def select_feedback_ratio() -> dict:
 
 	피드백이 있는 답변만 골라(WHERE feedback IS NOT NULL) feedback별 COUNT를 GROUP BY ... WITH ROLLUP으로 집계해
 	👍(1)·👎(-1) 건수와 합계를 한 번에 조회하고, 각 건수를 합계로 나눠 비율을 계산해 돌려준다.
+	답변 품질 통계라서 잡담(chat)·오류(error) 답변의 피드백은 빼고 센다 (route IN ('rag', 'no_answer'))
 
 	순서
 	1. feedback별 건수 + 합계 줄(feedback이 None인 줄)을 조회한다
@@ -255,6 +256,7 @@ def select_feedback_ratio() -> dict:
 		SELECT feedback, COUNT(*) AS count
 		FROM qa_logs
 		WHERE feedback IS NOT NULL
+			AND route IN ('rag', 'no_answer')
 		GROUP BY feedback WITH ROLLUP
 	"""
 
