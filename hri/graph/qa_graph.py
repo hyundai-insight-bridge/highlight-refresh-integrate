@@ -1,4 +1,4 @@
-"""질의응답 흐름 · build_qa_graph, route_question, route_after_grade, generate_node, no_answer_node, error_reply_node, chat_node, save_log_node (엄정현)
+"""질의응답 흐름 · build_qa_graph, route_question, route_after_grade, generate_node, no_answer_node, error_reply_node, chat_node, save_log_node (엄정현) / validate_node, rewrite_node, retrieve_node, sources_node (류현수)
 
 [3.8.4] 그래프 구성·분기(build_qa_graph·route_question·route_after_grade)와 체크포인터 연결을 명세대로 채웠다.
 [3.8.5] 답을 만드는 노드(generate·no_answer·error_reply·chat)와 기록 노드(save_log)를 채웠다.
@@ -6,8 +6,13 @@
 	  {'answer': 답변, 'has_source': 근거 유무, 'route': 최종 경로, 'messages': [이번 질문, 이번 답변]}
 	  messages는 add_messages 리듀서로 체크포인터의 대화 기록 끝에 붙는다 (다음 질문 때 이전 대화로 쓰임).
 	- save_log는 어느 갈래로 끝나든 마지막에 한 번 실행되어 질문 기록(qa_logs)과 LLM 사용량(llm_usage)을 저장한다.
-나머지 노드(validate·rewrite·retrieve·grade·sources·suggest)는 아직 가짜({} 반환)다.
-각 함수(validate_question·rewrite_question·hybrid_search·format_sources)가 들어오면 연결한다.
+검색 흐름 노드(validate·rewrite·retrieve·sources)를 채웠다.
+	- validate: validate_question·mask_pii (서동안 qa_service)
+	- rewrite: rewrite_question (장유빈 history_store)
+	- retrieve: hybrid_search (장유빈 search)
+	- sources: format_sources (장유빈 source_formatter)
+grade는 분기 함수 route_after_grade가 has_context()로 판단하므로 가짜({} 반환) 노드로 둔다.
+suggest는 후속 추천 질문 제거 전까지 가짜 노드로 둔다.
 
 흐름 (LangGraph 워크플로우 명세서 build_qa_graph 행)
 	START → validate → route_question
@@ -74,7 +79,7 @@ NO_ANSWER_TEXT = "자료에 없습니다"
 
 
 def _skeleton_node(state: QAState) -> dict:
-	"""뼈대용 가짜 노드: state를 바꾸지 않는다. 아직 함수가 연결되지 않은 노드(validate·rewrite·retrieve·grade·sources·suggest)가 쓴다."""
+	"""뼈대용 가짜 노드: state를 바꾸지 않는다. 함수를 연결하지 않는 노드(grade·suggest)가 쓴다."""
 	return {}
 
 
@@ -93,6 +98,57 @@ def _reply(state: QAState, answer: str, route: str, has_source: bool) -> dict:
 		"route": route,
 		"messages": [HumanMessage(state["question"]), AIMessage(answer)],
 	}
+
+def validate_node(state: QAState) -> dict:
+	"""[검증 노드] 질문을 검사하고, 통과하면 개인정보를 가린 질문으로 바꾼다.
+
+	1. validate_question(질문): 빈 입력·공백만·최대 길이 초과면 InvalidInputError (서동안 qa_service)
+	   → {'error': 안내 문구}. route_question이 error_reply로 보낸다.
+	2. 통과하면 mask_pii(앞뒤 공백을 뗀 질문) → {'question': 가린 질문, 'error': None}
+	   이후 노드(rewrite·retrieve·generate·save_log)는 가린 질문을 쓴다.
+	qa_service는 함수 안에서 import한다 (그래프 파일 import 때 서비스 모듈을 불러오지 않으려고).
+	"""
+	from hri.exception.errors import InvalidInputError
+	from hri.service.qa_service import mask_pii, validate_question
+
+	try:
+		question = validate_question(state.get("question") or "")
+	except InvalidInputError as error:
+		return {"error": str(error)}
+	return {"question": mask_pii(question), "error": None}
+
+
+def rewrite_node(state: QAState) -> dict:
+	"""[다시 쓰기 노드] 이전 대화를 보고 후속 질문을 혼자서도 뜻이 통하는 질문으로 바꾼다.
+
+	rewrite_question(질문, state['messages'])를 부른다 (장유빈 history_store).
+	state['messages']는 체크포인터에 쌓인 지난 질문·답변이고 이번 질문은 아직 들어 있지 않다.
+	이전 대화가 없으면 rewrite_question이 LLM 없이 질문을 그대로 돌려준다.
+	돌려주는 값: {'rewritten': 다시 쓴 질문}
+	"""
+	from hri.memory.history_store import rewrite_question
+
+	return {"rewritten": rewrite_question(state["question"], state.get("messages") or [])}
+
+
+def retrieve_node(state: QAState) -> dict:
+	"""[검색 노드] 다시 쓴 질문으로 선택한 보고서에서 근거 청크를 찾는다.
+
+	hybrid_search(질문, k, report_ids, use_mmr)를 부른다 (장유빈 search).
+	- 질문: state['rewritten'] (비어 있으면 state['question'])
+	- report_ids가 비어 있으면 None으로 넘겨 전체 보고서에서 찾는다 (보고서를 고르지 않은 경우)
+	돌려주는 값: {'docs': 찾은 청크 목록} (없으면 빈 목록 → route_after_grade가 no_answer로 보낸다)
+	"""
+	from hri.retriever.search import hybrid_search
+
+	question = state.get("rewritten") or state["question"]
+	docs = hybrid_search(
+		question,
+		k=state["k"],
+		report_ids=state.get("report_ids") or None,
+		use_mmr=state["use_mmr"],
+	)
+	return {"docs": docs}
 
 
 def generate_node(state: QAState) -> dict:
@@ -122,6 +178,17 @@ def generate_node(state: QAState) -> dict:
 	update = _reply(state, response.content, route="rag", has_source=True)
 	update["context_docs"] = context_docs
 	return update
+
+
+def sources_node(state: QAState) -> dict:
+	"""[출처 노드] generate가 만든 답변 근거(context_docs)로 화면에 보여 줄 출처 목록을 만든다.
+
+	format_sources(state['context_docs'])를 부른다 (장유빈 source_formatter).
+	돌려주는 값: {'sources': [{report_id, report_title, page_start, page_end, kind, label, needs_review}, ...]}
+	"""
+	from hri.source.source_formatter import format_sources
+
+	return {"sources": format_sources(state.get("context_docs") or [])}
 
 
 def no_answer_node(state: QAState) -> dict:
@@ -283,15 +350,15 @@ def build_qa_graph() -> StateGraph:
 	graph = StateGraph(QAState)
 
 	# 노드 11개
-	graph.add_node("validate", _skeleton_node)
+	graph.add_node("validate", validate_node)
 	graph.add_node("chat", chat_node)
 	graph.add_node("error_reply", error_reply_node)
-	graph.add_node("rewrite", _skeleton_node)
-	graph.add_node("retrieve", _skeleton_node)
+	graph.add_node("rewrite", rewrite_node)
+	graph.add_node("retrieve", retrieve_node)
 	graph.add_node("grade", _skeleton_node)
 	graph.add_node("no_answer", no_answer_node)
 	graph.add_node("generate", generate_node)
-	graph.add_node("sources", _skeleton_node)
+	graph.add_node("sources", sources_node)
 	graph.add_node("suggest", _skeleton_node)
 	graph.add_node("save_log", save_log_node)
 
