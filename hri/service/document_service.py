@@ -6,6 +6,14 @@ import os
 
 import pymupdf
 
+import logging
+from collections.abc import Iterator
+from langchain_core.callbacks import UsageMetadataCallbackHandler
+from hri.graph.registry import get_ingest_graph
+from hri.llm.llm_client import cost_korean_won, get_usd_krw
+from hri.dao.usage_dao import insert_usage
+from hri.domain.schemas import LlmUsage
+
 from hri.config.settings import load_settings
 from hri.domain.schemas import ValidationResult
 
@@ -65,13 +73,6 @@ def validate_pdf(file_path: str) -> ValidationResult:
 	return ValidationResult(ok=True)
 
 # (김희진)
-import logging
-from collections.abc import Iterator
-from langchain_core.callbacks import UsageMetadataCallbackHandler
-from hri.graph.registry import get_ingest_graph
-from hri.llm.llm_client import cost_korean_won, get_usd_krw
-from hri.dao.usage_dao import insert_usage
-from hri.domain.schemas import LlmUsage
 
 logger = logging.getLogger(__name__)
 
