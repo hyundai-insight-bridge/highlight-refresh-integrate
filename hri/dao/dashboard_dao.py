@@ -1,11 +1,16 @@
-"""대시보드 1차 SQL · select_top_questions, select_source_ratio, select_perf_cost, select_recent_errors (임세준)
+"""대시보드 SQL · select_top_questions, select_source_ratio, select_perf_cost, select_recent_errors, select_daily_counts, select_persona_ratio, select_feedback_ratio, select_no_source_questions (임세준)
 
-관리자 대시보드 1차 화면에 보여 줄 값을 qa_logs·llm_usage 테이블에서 집계하는 DAO.
-get_dashboard_data()(3.7.8)가 이 함수들의 결과를 화면 형식으로 가공한다.
+관리자 대시보드 화면에 보여 줄 값을 qa_logs·llm_usage 테이블에서 집계하는 DAO.
+1차: get_dashboard_data()(3.7.8)가 이 함수들의 결과를 화면 형식으로 가공한다.
 - select_top_questions(): 많이 물어본 질문 TOP 10
 - select_source_ratio(): '자료에 없습니다'(no_answer) 응답 비율
 - select_perf_cost(): 일자별 평균 응답 시간 + flow·모델별 토큰 합계 (원화 비용은 DB에 저장하지 않고 get_dashboard_data()에서 계산)
 - select_recent_errors(): 최근 에러 기록 20건
+2차: get_dashboard_data_v2()(3.7.11)가 이 함수들의 결과를 화면 형식으로 가공한다.
+- select_daily_counts(): 날짜별 질문 수·평균 응답 시간 (VIEW v_daily_usage)
+- select_persona_ratio(): 페르소나별 질문 수 + 합계 (WITH ROLLUP)
+- select_feedback_ratio(): 👍/👎 건수·합계·비율 (WITH ROLLUP)
+- select_no_source_questions(): '자료에 없습니다'가 2회 이상 나온 질문 (보고서 보강 후보)
 """
 from hri.dao.db import get_connection
 
@@ -148,6 +153,168 @@ def select_recent_errors() -> list[dict]:
 		WHERE route = 'error' OR error IS NOT NULL
 		ORDER BY created_at DESC, log_id DESC
 		LIMIT 20
+	"""
+
+	with get_connection() as conn:
+		cursor = conn.cursor()
+		cursor.execute(sql)
+		rows = cursor.fetchall()
+
+	return list(rows)
+
+
+
+def select_daily_counts() -> list[dict]:
+	"""
+	사용 추이 조회 (날짜별 질문 수·평균 응답 시간)
+
+	VIEW v_daily_usage(DATE(created_at)별 질문 수·평균 응답 시간)를 조회한다.
+	- VIEW는 sql/schema.sql에 만들어 둔 '저장된 SELECT'라서 테이블처럼 조회하면 된다
+	- 차트를 그리기 좋게 오래된 날짜부터 정렬한다
+	- DB가 돌려준 Decimal(소수 타입) 평균 응답 시간을 float로 바꾼다 (소수 첫째 자리까지)
+
+	입력: 없음
+	출력: list[dict]
+	      예) [{'day': date(2026, 10, 27), 'question_count': 12, 'avg_response_ms': 1000.0}, ...]
+	      (기록이 없으면 [], 그날 응답 시간이 모두 비어 있으면 avg_response_ms는 None)
+	"""
+	sql = """
+		SELECT day, question_count, avg_response_ms
+		FROM v_daily_usage
+		ORDER BY day
+	"""
+
+	with get_connection() as conn:
+		cursor = conn.cursor()
+		cursor.execute(sql)
+		rows = cursor.fetchall()
+
+	# Decimal → float로 바꾸기
+	results = []
+	for row in rows:
+		avg_response_ms = row["avg_response_ms"]
+		if avg_response_ms != None:
+			avg_response_ms = round(float(avg_response_ms), 1)
+
+		results.append({
+			"day": row["day"],
+			"question_count": int(row["question_count"]),
+			"avg_response_ms": avg_response_ms
+		})
+
+	return results
+
+
+def select_persona_ratio() -> list[dict]:
+	"""
+	페르소나별 질문 수 조회 (합계 행 포함)
+
+	persona별 COUNT를 GROUP BY ... WITH ROLLUP으로 집계해 합계 행까지 한 번에 조회한다.
+	- WITH ROLLUP은 GROUP BY 결과 맨 아래에 전체 합계 줄을 하나 더 붙여 준다
+	- 합계 줄은 persona가 None이다 (어느 페르소나에도 속하지 않는 '전체'라서)
+	  예) 입문자 3 + 실무자 9 → [{'persona': '입문자', 'count': 3}, {'persona': '실무자', 'count': 9}, {'persona': None, 'count': 12}]
+	- 비율(각 페르소나 수 / 합계)은 get_dashboard_data_v2()가 이 결과로 계산한다
+
+	입력: 없음
+	출력: list[dict] (페르소나별 줄 + 맨 아래 합계 줄, 기록이 없으면 [])
+	"""
+	sql = """
+		SELECT persona, COUNT(*) AS count
+		FROM qa_logs
+		GROUP BY persona WITH ROLLUP
+	"""
+
+	with get_connection() as conn:
+		cursor = conn.cursor()
+		cursor.execute(sql)
+		rows = cursor.fetchall()
+
+	return list(rows)
+
+
+def select_feedback_ratio() -> dict:
+	"""
+	피드백 비율 조회 (👍/👎)
+
+	피드백이 있는 답변만 골라(WHERE feedback IS NOT NULL) feedback별 COUNT를 GROUP BY ... WITH ROLLUP으로 집계해
+	👍(1)·👎(-1) 건수와 합계를 한 번에 조회하고, 각 건수를 합계로 나눠 비율을 계산해 돌려준다.
+
+	순서
+	1. feedback별 건수 + 합계 줄(feedback이 None인 줄)을 조회한다
+	   예) [{'feedback': -1, 'count': 1}, {'feedback': 1, 'count': 3}, {'feedback': None, 'count': 4}]
+	2. 줄마다 feedback 값을 보고 👍 건수·👎 건수·합계에 나눠 담는다
+	   (피드백이 없는 답변은 WHERE에서 빠졌으므로 feedback이 None인 줄은 합계 줄뿐)
+	3. 합계가 0보다 크면 각 건수를 합계로 나눠 비율을 계산한다 (소수점 넷째 자리까지)
+
+	입력: 없음
+	출력: dict
+	      예) {'up_count': 3, 'down_count': 1, 'total': 4, 'up_ratio': 0.75, 'down_ratio': 0.25}
+	      (피드백이 하나도 없으면 건수는 0, 비율은 0.0)
+	"""
+	sql = """
+		SELECT feedback, COUNT(*) AS count
+		FROM qa_logs
+		WHERE feedback IS NOT NULL
+		GROUP BY feedback WITH ROLLUP
+	"""
+
+	with get_connection() as conn:
+		cursor = conn.cursor()
+		cursor.execute(sql)
+		rows = cursor.fetchall()
+
+	# 2) 👍 건수·👎 건수·합계 나눠 담기
+	up_count = 0
+	down_count = 0
+	total = 0
+	for row in rows:
+		if row["feedback"] == 1:
+			up_count = row["count"]
+		elif row["feedback"] == -1:
+			down_count = row["count"]
+		else:
+			total = row["count"]
+
+	# 3) 비율 계산 (피드백이 없으면 0.0)
+	up_ratio = 0.0
+	down_ratio = 0.0
+	if total > 0:
+		up_ratio = round(up_count / total, 4)
+		down_ratio = round(down_count / total, 4)
+
+	return {
+		"up_count": up_count,
+		"down_count": down_count,
+		"total": total,
+		"up_ratio": up_ratio,
+		"down_ratio": down_ratio
+	}
+
+
+def select_no_source_questions() -> list[dict]:
+	"""
+	근거 없는 질문 목록 조회 (보고서 보강 후보)
+
+	서브쿼리로 '자료에 없습니다'(route = 'no_answer') 응답이 2회 이상 나온 질문만 골라 조회한다.
+
+	순서
+	1. 안쪽 쿼리(서브쿼리): no_answer 답변만 골라 질문별로 몇 번 나왔는지 센다
+	2. 바깥 쿼리: 그중 2회 이상 나온 질문만 남긴다
+	3. 많이 나온 질문부터 정렬한다
+
+	입력: 없음
+	출력: list[dict] (예: [{'question': '반도체 수출 전망은?', 'count': 3}, ...], 없으면 [])
+	"""
+	sql = """
+		SELECT question, count
+		FROM (
+			SELECT question, COUNT(*) AS count
+			FROM qa_logs
+			WHERE route = 'no_answer'
+			GROUP BY question
+		) AS no_source
+		WHERE count >= 2
+		ORDER BY count DESC
 	"""
 
 	with get_connection() as conn:
