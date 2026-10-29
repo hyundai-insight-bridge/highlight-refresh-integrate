@@ -188,8 +188,6 @@ def test_rates_all_empty():
 
 
 # [확인 11] 한 통화만 API 오류가 나도 나머지 통화는 나와야 한다 (명세서: 통화별로 실패하면 그 줄만 '불러오지 못했습니다')
-@pytest.mark.xfail(strict=True, reason=(
-	"get_exchange_rates()가 통화별 오류를 잡지 않아, JPY 하나가 오류(ERROR-500)면 USD·EUR까지 모두 예외로 끝남"))
 def test_rates_one_currency_error_keeps_others():
 	client = FakeEcos({"USD": [_row("20261028", "1385.5")],
 		"JPY": EcosResponseError("ERROR-500", "서버 오류"), "EUR": [_row("20261028", "1490.2")]})
