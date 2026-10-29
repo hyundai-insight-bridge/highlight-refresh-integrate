@@ -41,7 +41,6 @@ def load_settings() -> Settings:
 	settings = Settings(
 		openai_api_key=os.getenv("OPENAI_API_KEY", ""),
 		ecos_api_key=os.getenv("ECOS_API_KEY", ""),
-		stdict_api_key=os.getenv("STDICT_API_KEY", ""),
 		koreaexim_api_key=os.getenv("KOREAEXIM_API_KEY", ""),
 		mysql_host=os.getenv("MYSQL_HOST"),
 		mysql_port=os.getenv("MYSQL_PORT", "3306"),
