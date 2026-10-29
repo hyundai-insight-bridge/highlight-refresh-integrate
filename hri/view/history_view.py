@@ -6,11 +6,12 @@
 - on_restore(): 고른 대화를 질의응답 탭 Chatbot에 채우고 state의 session_id를 바꾼다
 - 버튼 연결은 state·질의응답 탭 Chatbot이 필요해서 app.py의 build_app()에서 한다
 - 그래서 build_app()에서 쓸 화면 부품을 history_components에 담아 둔다
+- on_load_history(): 내 기록 탭을 열 때 get_history()로 기록 표·대화 선택 목록을 채운다
 """
 import gradio as gr
 
 from hri.loader.table_loader import table_to_markdown
-from hri.service.history_service import restore_session
+from hri.service.history_service import get_history, restore_session
 from hri.util.logger import safe_call
 
 
@@ -80,3 +81,52 @@ def on_restore(session_id: str, state):
 
 	# 3) Chatbot 대화와 state 돌려주기
 	return chat_history, state
+
+
+@safe_call
+def on_load_history(state):
+	"""
+	내 기록 탭 열었을 때
+
+	get_history()로 로그인한 사람의 질문 기록을 가져와
+	대화(session_id)별로 묶어서 기록 표와 대화 선택 목록을 채운다.
+
+	순서
+	1. 로그인 전이면(user가 None) 머리글만 있는 표와 빈 목록을 돌려준다
+	2. get_history(user_id)로 기록을 최신순으로 가져온다
+	3. session_id별로 마지막 시각·첫 질문·질문 수를 모은다
+	   - 기록이 최신순이라 대화에서 처음 만나는 기록이 마지막 시각,
+	     마지막에 만나는 기록이 첫 질문이다
+	4. [마지막 시각, 첫 질문, 질문 수] 표와 ("시각 · 첫 질문", session_id) 선택지를 만든다
+
+	입력: state (gr.State)
+	출력: tuple (기록 표 Markdown, 대화 선택 gr.update)
+	"""
+	rows = [["마지막 시각", "첫 질문", "질문 수"]]
+
+	# 1) 로그인 전이면 빈 표
+	if state["user"] == None:
+		return table_to_markdown(rows), gr.update(choices=[], value=None)
+
+	# 2) 기록 가져오기 (최신순)
+	logs = get_history(state["user"]["user_id"])
+
+	# 3) 대화별로 묶기 (dict는 넣은 순서를 지켜서 최근 대화가 먼저 옴)
+	sessions = {}
+	for log in logs:
+		if log.session_id not in sessions:
+			sessions[log.session_id] = {
+				"last_time": log.created_at.strftime("%Y-%m-%d %H:%M"),
+				"first_question": log.question,
+				"count": 0
+			}
+		sessions[log.session_id]["first_question"] = log.question
+		sessions[log.session_id]["count"] = sessions[log.session_id]["count"] + 1
+
+	# 4) 표와 선택지 만들기
+	choices = []
+	for session_id, info in sessions.items():
+		rows.append([info["last_time"], info["first_question"], info["count"]])
+		choices.append((f"{info['last_time']} · {info['first_question']}", session_id))
+
+	return table_to_markdown(rows), gr.update(choices=choices, value=None)
