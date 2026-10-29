@@ -2,6 +2,7 @@
 import gradio as gr
 import os
 import logging
+from hri.util.logger import safe_call
 from hri.service.report_service import search_reports
 from hri.service.document_service import upload_report
 # ---------------------------------------------------------------------
@@ -204,6 +205,7 @@ def _find_report(report_id):
 	except Exception:
 		return None
 
+@safe_call
 def on_upload(file_paths: list[str] | None, state: dict):
 	"""업로드 버튼: 고른 PDF를 한 개씩 upload_report()가 처리하며 진행 상황을 Markdown에 갱신한다. (제네레이터)
 	
