@@ -37,7 +37,7 @@ class AnswerResult(BaseModel):
 
 
 class SuggestOutput(BaseModel):
-	"""suggest_questions()가 with_structured_output()으로 받는 후속 질문."""
+	"""질의응답 그래프의 suggest 노드가 with_structured_output()으로 받는 후속 질문."""
 
 	questions: list[str] = Field(
 		min_length=3,

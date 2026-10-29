@@ -7,7 +7,7 @@
 	  messages는 add_messages 리듀서로 체크포인터의 대화 기록 끝에 붙는다 (다음 질문 때 이전 대화로 쓰임).
 	- save_log는 어느 갈래로 끝나든 마지막에 한 번 실행되어 질문 기록(qa_logs)과 LLM 사용량(llm_usage)을 저장한다.
 나머지 노드(validate·rewrite·retrieve·grade·sources·suggest)는 아직 가짜({} 반환)다.
-각 함수(validate_question·rewrite_question·hybrid_search·format_sources·suggest_questions)가 들어오면 연결한다.
+각 함수(validate_question·rewrite_question·hybrid_search·format_sources)가 들어오면 연결한다.
 
 흐름 (LangGraph 워크플로우 명세서 build_qa_graph 행)
 	START → validate → route_question
