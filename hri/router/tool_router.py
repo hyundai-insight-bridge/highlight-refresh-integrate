@@ -6,13 +6,15 @@
 import json
 import logging
 from typing import Annotated, Literal
-
 from langchain_core.tools import tool
+from langchain_core.callbacks import UsageMetadataCallbackHandler
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.prebuilt import InjectedState
-
+from langgraph.errors import GraphRecursionError
 from hri.exception.errors import ExternalApiError, OutputFormatError
+from hri.domain.schemas import LlmUsage
 
-__all__ = ["TOOLS"]
+__all__ = ["TOOLS", "run_agent_with_tools"]
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +28,8 @@ NO_ECOS_DATA_MESSAGE = "조건에 맞는 ECOS 통계 값이 없습니다."
 NO_EXCHANGE_RATE_MESSAGE = "환율을 불러오지 못했습니다."
 # ECOS 라이브러리 등 예상 못 한 오류가 났을 때 안내 (오류 내용은 로그에만 남긴다)
 ECOS_FAIL_MESSAGE = "데이터를 불러오지 못했습니다."
-
+# 요청을 끝까지 처리하지 못했을 때(도구 반복이 recursion_limit을 넘음, 답변이 비어 있음) 보여 주는 안내
+REQUEST_FAIL_MESSAGE = "요청을 처리하지 못했습니다."
 # report_ids는 LLM이 아니라 그래프 상태(AgentState.report_ids)에서 주입한다 (LLM이 보고서를 고르거나 바꾸지 못함)
 ReportIds = Annotated[list[int], InjectedState("report_ids")]
 
@@ -186,3 +189,94 @@ TOOLS = [
 	get_ecos_statistic_data,
 	get_ecos_exchange_rate,
 ]
+
+# ── 에이전트 실행 · run_agent_with_tools (김희진)
+def _message_text(content) -> str:
+	"""AIMEssage.content를 글자로 바꾼다.
+	문자열이 아니라 블록으로 오면 글자 블록만 이어 붙인다.
+	"""
+	if isinstance(content, str):
+		return content
+	parts = []
+
+	for block in content or []:
+		if isinstance(block, str):
+			parts.append(block)
+		elif isinstance(block, dict) and block.get("type") == "text":
+			parts.append(block.get("text", ""))
+
+	return "".join(parts)
+
+def _cost_krw(model: str, tokens: dict) -> float | None:
+	"""모델 1개의 원화 비용.
+	환율·단가를 못 구해도 토큰 기록은 남기려고 None으로 둔다."""
+	from hri.llm.llm_client import cost_korean_won, get_usd_krw
+
+	try:
+		return cost_korean_won({model: tokens}, get_usd_krw())
+	except Exception:
+		logger. exception("에이전트 비용 계산 실패: model=%s", model)
+		return None
+
+def _record_usage(usage: UsageMetadataCallbackHandler) -> None:
+	"""에이전트가 쓴 AI 사용량을 모델별로 llm_usage에 저장한다 (flow='agent').
+	
+	요청 단위 번호(ref_id)와 사용자(user_id)는 입력에 없어 비워 둔다.
+	도구가 부른 요약·검증 안의 AI 사용량도 같은 callbacks로 함께 모인다.
+	비용 계산·DB 오류는 로그만 남기고 삼킨다: 이미 만든 답변을 오류처럼 보이게 하지 않으려고.
+	"""
+	if not usage.usage_metadata:
+		return
+
+	from hri.dao.usage_dao import insert_usage
+
+	for model, tokens in usage.usage_metadata.items():
+		try:
+			insert_usage(LlmUsage(
+				flow="agent",
+				model=model,
+				input_tokens=tokens.get("input_tokens", 0),
+				output_tokens=tokens.get("output_tokens", 0),
+				cost_krw=_cost_krw(model, tokens)
+			))
+		except Exception:
+			logger.exception("에이전트 사용량 기록 실패: model=%s", model)
+
+def run_agent_with_tools(request: str, report_ids: list[int]) -> tuple[str, list[str]]:
+	"""자연어 요청을 에이전트 그래프(agent <> tools 루프)로 처리해 (답변, 실행한 도구 이름 목록)을 돌려준다.
+	
+	순서
+	1. get_agent_graph()로 받은 그래프를 invoke한다
+		- 입력: {'messages': [사용자 요청], 'report_ids': 선택한 보고서}
+		(system 메시지는 agent_node가 매번 맨 앞에 붙이므로 넣지 않는다)
+		- config: recursion_limit=GRAPH_RECURSION_LIMIT(.env, 기본 8 -> 도구는 약 3번), callbacks=[사용량 핸들러]
+	2. 루프가 끝나면 마지막 AIMessage의 글자를 답변으로, ToolMessage.name으 실행 순서대로 도구 이름으로 돌려주다.
+	3. recursion_limit을 넘으면(GraphRecursionError) 오류로 올리지 않고 '요청을 처리하지 못해했습니다.'를 돌려준다.
+	4. 끝나면(실패해도) 쓴 토큰을 insert_usage(flow='agent')로 모델별 기록한다.
+	
+	명세서의 반환(str)과 달리 도구 이름 목록도 함께 돌려준다: on_request()가 '실행한 도구'를 화면에 보여 주기 때문이다.
+
+	입력: request (자연어 요청), report_ids (선택한 보고서 번호 목록, 비어 있어도 됨)
+	출력: tuple (답변 str, 도구 이름 list[str])
+	"""
+	from hri.config.settings import load_settings
+	from hri.graph.registry import get_agent_graph
+
+	graph = get_agent_graph()
+	usage = UsageMetadataCallbackHandler()
+	config = {"recursion_limit": load_settings().graph_recursion_limit, "callbacks": [usage]}
+	inputs = {"messages": [HumanMessage(request)], "report_ids": list(dict.fromkeys(report_ids or []))}
+
+	try:
+		state = graph.invoke(inputs, config=config)
+	except GraphRecursionError:
+		logger.warning("에이전트가 recursion_limit(%s)을 넘었습니다: %s", config["recursion_limit"], request)
+		return REQUEST_FAIL_MESSAGE, []
+	finally:
+		_record_usage(usage)
+	messages = state["messages"]
+	tool_names = [m.name for m in messages if isinstance(m, ToolMessage)]
+	last_ai = next((m for m in reversed(messages) if isinstance(m, AIMessage)), None)
+	answer = _message_text(last_ai.content).strip() if last_ai else ""
+	
+	return answer or REQUEST_FAIL_MESSAGE, tool_names
