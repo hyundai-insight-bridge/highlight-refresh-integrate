@@ -160,9 +160,10 @@ def build_app():
 			# 요약·분석, 질의응답, 내 기록, 관리자 탭
 			summary_tab = build_summary_tab()
 			chat_tab = build_chat_tab()
-			# 질의응답 탭 버튼 연결 (state가 필요해서 build_app에서 부름)
-			connect_chat_events(state)
 			history_tab = build_history_tab()
+			admin_tab = build_admin_tab()
+		# 질의응답 탭 버튼 연결 (state가 필요해서 build_app에서 부름)
+		connect_chat_events(state)
 
 		# 로그인 버튼 누르면 로그인 → 다른 사람이 로그인했으면 이전 사용자의 화면 내용 비우기
 		login_components["login_btn"].click(
