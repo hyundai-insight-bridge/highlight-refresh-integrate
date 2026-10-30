@@ -79,7 +79,9 @@ INDICATOR_SYSTEM_PROMPT = (
 	"7. source는 수치를 찾은 위치입니다. 일반 본문은 text, '[표 ...]' 블록은 table, '[차트 ...]' 블록은 chart입니다.\n"
 	"8. 제목 줄에 '(추정)'이 붙은 차트 블록에서 읽은 수치는 needs_review를 true로, 그 밖의 수치는 false로 합니다.\n"
 	"9. 같은 지표·같은 시점·같은 값은 한 번만 뽑습니다.\n"
-	"10. 뽑을 수치가 없으면 빈 목록을 돌려줍니다."
+	"10. page는 수치가 적힌 쪽 번호입니다. '[표 p.12 ...]'·'[차트 p.12 ...]' 블록의 수치는 12, "
+	"일반 본문의 수치는 그 본문이 속한 '## 제목 (p.3-5)' 줄의 시작 쪽 3입니다. 알 수 없으면 null입니다.\n"
+	"11. 뽑을 수치가 없으면 빈 목록을 돌려줍니다."
 )
 
 # 허용하는 기준 시점 형식: 연 YYYY · 분기 YYYYQn · 월 YYYYMM · 일 YYYYMMDD
@@ -123,6 +125,7 @@ def _clean_indicators(indicators: list[Indicator], report_id: int) -> list[Indic
 	- 이름은 대표 이름으로 통일하고, 기준 시점은 대문자로 맞춘다 (2026q2 → 2026Q2)
 	- 기준 시점 형식이 틀렸거나 이름이 빈 지표는 버린다 (ECOS 비교 기간을 만들 수 없다)
 	- 이름·시점·값·단위가 같은 지표는 먼저 나온 것 하나만 남긴다
+	- 쪽 번호가 1보다 작으면 None으로 바꾼다 (잘못 읽은 쪽을 비교표에 보이지 않게 한다)
 	"""
 	cleaned: list[Indicator] = []
 	seen: set[tuple[str, str, float, str]] = set()
@@ -136,7 +139,8 @@ def _clean_indicators(indicators: list[Indicator], report_id: int) -> list[Indic
 		if key in seen:
 			continue
 		seen.add(key)
-		cleaned.append(item.model_copy(update={"report_id": report_id, "name": name, "period": period, "unit": unit}))
+		page = item.page if item.page is not None and item.page >= 1 else None
+		cleaned.append(item.model_copy(update={"report_id": report_id, "name": name, "period": period, "unit": unit, "page": page})) 
 	return cleaned
 
 
@@ -201,6 +205,7 @@ SYSTEM_FONT_NAMES = ["NanumGothic", "Malgun Gothic", "AppleGothic", "Noto Sans C
 EMPTY_CELL = "-"  # 그 보고서에 없는 지표 칸
 REVIEW_MARK = "*"  # 차트에서 읽어 확인이 필요한 값(needs_review) 표시
 REVIEW_NOTE = f"{REVIEW_MARK} 차트에서 읽은 추정값이라 확인이 필요합니다."
+DIFF_HEADER = "차이(최대−최소)"  # 보고서 2개 이상을 비교할 때 표 맨 끝에 붙이는 열 이름
 MAX_UNIT_GROUPS = 3  # 차트 하나에 그리는 단위 묶음 수 (단위가 같은 지표끼리 한 칸)
 MAX_BARS_PER_GROUP = 8  # 한 칸에 그리는 지표·시점 수 (너무 많으면 글자가 겹친다)
 LEGEND_TITLE_LENGTH = 20  # 범례에 쓰는 보고서 제목의 최대 글자 수
@@ -254,11 +259,28 @@ def _rows_to_markdown(header: list[str], body: list[list[str]]) -> str:
 	return "\n".join(lines)
 
 
+def _format_cell(item: Indicator) -> str:
+	"""표 칸에 넣을 글자: 값 + 확인 필요 '*' + 출처 쪽. 예: '2.4', '1,390*', '2.4 (p.12)'."""
+	text = _format_value(item.value) + (REVIEW_MARK if item.needs_review else "")
+	return f"{text} (p.{item.page})" if item.page else text
+
+def _diff_cell(items: list[Indicator], unit: str) -> str:
+	"""보고서들의 값 차이(최대값 − 최소값)를 칸 글자로 만든다. 값이 2개 미만이면 '-'.
+
+	단위가 %이면 차이는 %p로 적고, 그 밖의 단위는 그대로 붙인다. 차이를 만든 값 중 확인이 필요한 값이 있으면 '*'를 붙인다.
+	"""
+	if len(items) < 2:
+		return EMPTY_CELL
+	values = [item.value for item in items]
+	suffix = "%p" if unit == "%" else unit
+	mark = REVIEW_MARK if any(item.needs_review for item in items) else ""
+	return f"{_format_value(max(values) - min(values))}{suffix}{mark}"
+
 def build_compare_table(report_ids: list[int]) -> str:
 	"""선택한 보고서들의 지표를 한 표(Markdown)로 비교한다.
 
 	행은 (지표 이름, 시점, 단위), 열은 보고서 제목이다. 그 보고서에 없는 칸은 '-'로 채우고,
-	차트에서 읽어 확인이 필요한 값(needs_review)에는 '*'를 붙인 뒤 표 아래에 설명을 적는다.
+	출처 쪽을 아는 값은 '2.4 (p.12)'처럼 쪽을 함께 적고, 보고서가 2개 이상이면 맨 끝에 값 차이(최대−최소) 열을 붙인다.
 	여러 보고서에 함께 나온 지표가 위로 온다. 지표가 하나도 없으면 빈 문자열을 돌려준다.
 	"""
 	report_ids = list(dict.fromkeys(report_ids))  # 중복 번호 제거 (순서 유지)
@@ -268,6 +290,9 @@ def build_compare_table(report_ids: list[int]) -> str:
 
 	titles = _report_titles(report_ids)
 	header = ["지표", "시점", "단위", *(_escape_cell(titles[rid]) for rid in report_ids)]
+	with_diff = len(report_ids) >= 2  # 보고서가 하나뿐이면 비교할 대상이 없어 차이 열을 두지 않는다
+	if with_diff:
+		header.append(DIFF_HEADER)
 	body = []
 	has_review = False
 	for key in _sorted_keys(rows):
@@ -277,10 +302,13 @@ def build_compare_table(report_ids: list[int]) -> str:
 			if item is None:
 				cells.append(EMPTY_CELL)
 				continue
-			mark = REVIEW_MARK if item.needs_review else ""
 			has_review = has_review or item.needs_review
-			cells.append(_format_value(item.value) + mark)
+			cells.append(_format_cell(item))
+		if with_diff:
+			cells.append(_diff_cell(list(rows[key].values()), key[2]))
 		body.append([_escape_cell(key[0]), key[1], _escape_cell(key[2]) or EMPTY_CELL, *cells])
+		if with_diff:
+			cells.append(_diff_cell(list(rows[key].values()), key[2]))
 
 	table = _rows_to_markdown(header, body)
 	return f"{table}\n\n{REVIEW_NOTE}" if has_review else table
