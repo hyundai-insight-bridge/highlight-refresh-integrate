@@ -10,6 +10,10 @@ from hri.dao.indicator_dao import insert_indicators, select_indicators
 from hri.domain.schemas import Indicator
 from hri.service.report_service import get_report_text, search_reports
 
+from langchain_openai import ChatOpenAI
+
+from hri.llm.llm_client import MODEL
+
 logger = logging.getLogger(__name__)
 
 
@@ -19,7 +23,7 @@ logger = logging.getLogger(__name__)
 # =====================================================================
 
 # 지표 추출 답변이 길어질 수 있어 넉넉히 둔다 (gpt-5-mini는 추론 토큰도 max_tokens에 포함)
-INDICATOR_MAX_TOKENS = 4000
+INDICATOR_MAX_TOKENS = 16000
 
 # 지표 이름 통일표: 대표 이름 → 보고서마다 다르게 쓰는 이름들
 # 보고서끼리 지표를 비교하려면 같은 지표가 같은 이름이어야 한다 (이름이 없으면 추가하면 된다)
@@ -112,12 +116,17 @@ def _clean_indicators(indicators: list[Indicator], report_id: int) -> list[Indic
 def _request_indicators(text: str) -> IndicatorList | None:
 	"""보고서 본문을 LLM에 보내 지표 목록을 받는다. 결과를 읽지 못하면 None.
 
-	get_chat_model은 import할 때 .env를 읽는 모듈에 있어서, 이 함수 안에서 불러온다
+	llm_client는 import할 때 .env를 읽는 모듈에 있어서, 이 함수 안에서 불러온다
 	(테스트가 .env 없이도 extract_indicators의 나머지 로직을 확인할 수 있게 하려는 것).
+	지표 추출은 본문의 수치를 옮겨 적는 일이라 추론 강도를 낮춘다.
+	(gpt-5-mini는 추론에 max_tokens를 다 써 버리면 답이 비어 LengthFinishReasonError가 난다)
 	"""
-	from hri.llm.llm_client import get_chat_model
 
-	model = get_chat_model(max_tokens=INDICATOR_MAX_TOKENS).with_structured_output(IndicatorList)
+	model = ChatOpenAI(
+		model=MODEL,
+		max_tokens=INDICATOR_MAX_TOKENS,
+		reasoning_effort="low",
+	).with_structured_output(IndicatorList)
 	messages = [
 		{"role": "system", "content": INDICATOR_SYSTEM_PROMPT},
 		{"role": "user", "content": f"[보고서 본문]\n{text}"},
