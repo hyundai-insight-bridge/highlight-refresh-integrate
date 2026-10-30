@@ -11,12 +11,21 @@ import gradio as gr
 from hri.config.settings import load_settings
 from hri.graph.registry import get_ingest_graph, get_qa_graph, get_summary_graph, get_agent_graph
 from hri.view.user_view import build_login_tab, on_login, on_logout, login_components
-from hri.view.report_view import build_upload_tab, build_report_list_panel, on_view_summary, on_go_chat, on_report_select, on_upload, report_list_components, upload_components
+from hri.view.report_view import build_upload_tab, build_report_list_panel, on_view_summary, on_go_chat, on_report_search, on_report_select, on_upload, report_list_components, upload_components
 from hri.view.summary_view import build_summary_tab, on_summarize, on_request, summary_components, on_merge
 from hri.view.chat_view import build_chat_tab, chat_components, connect_chat_events, refresh_report_choices
 from hri.view.indicator_view import on_compare
 from hri.view.history_view import build_history_tab, history_components, on_load_history, on_restore
 from hri.view.admin_view import build_admin_tab
+
+
+# 화면 전체 테마 (UI 레퍼런스: 옅은 회색 배경·파란 강조색·둥근 모서리, CSS 없이 Gradio 테마 옵션만 사용)
+APP_THEME = gr.themes.Soft(
+	primary_hue="blue",
+	neutral_hue="slate",
+	radius_size="lg",
+	font=[gr.themes.GoogleFont("Noto Sans KR"), "sans-serif"],
+)
 
 
 def init_state():
@@ -161,7 +170,6 @@ def build_app():
 			summary_tab = build_summary_tab()
 			chat_tab = build_chat_tab()
 			history_tab = build_history_tab()
-			admin_tab = build_admin_tab()
 		# 질의응답 탭 버튼 연결 (state가 필요해서 build_app에서 부름)
 		connect_chat_events(state)
 
@@ -189,6 +197,13 @@ def build_app():
 			fn=on_logout,
 			inputs=state,
 			outputs=[state, login_tab, report_tab, summary_tab, chat_tab, history_tab, admin_tab, logout_btn, tabs, compare_reports]
+		)
+
+		# 보고서 탭을 열면 보고서 목록 불러오기 (목록 메뉴가 처음부터 펼쳐져 있어서 펼칠 때 대신 여기서 불러옴)
+		report_tab.select(
+			fn=on_report_search,
+			inputs=[report_list_components["keyword"], state],
+			outputs=[report_list_components["table"], report_list_components["listed_ids"], report_list_components["message"]]
 		)
 
 		# 보고서 목록 표에서 줄을 누르면 그 보고서를 선택
@@ -288,4 +303,4 @@ def main():
 
 	# 화면 띄우기
 	demo = build_app()
-	demo.launch(server_port=7860, theme=gr.themes.Soft())
+	demo.launch(server_port=7860, theme=APP_THEME)
