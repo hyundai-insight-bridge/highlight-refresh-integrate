@@ -9,7 +9,7 @@ import uuid
 import gradio as gr
 
 from hri.service.user_service import login, register
-from hri.service.report_service import search_reports
+from hri.service.report_service import owner_filter, search_reports
 from hri.exception.errors import LoginFailedError, DuplicateUserError
 
 
@@ -137,6 +137,7 @@ def on_login(user_id: str, password: str):
 	   실패(LoginFailedError)하면 화면은 그대로 두고 안내 메시지만 보여 준다
 	3. 성공하면 사용자 정보를 gr.State에 저장할 state로 만든다
 	4. 지표 비교 탭에서 고를 보고서 목록을 search_reports()로 만든다 ((제목, report_id) 쌍)
+	   (일반 사용자는 본인이 올린 보고서만, 관리자는 전체)
 	5. 로그인 탭은 숨기고, 메인 탭들을 보이게 하고, 질의응답 탭으로 이동한다
 	   role이 "admin"이면 관리자 탭도 보여 준다
 
@@ -201,7 +202,7 @@ def on_login(user_id: str, password: str):
 	# 4) 지표 비교 탭에서 고를 보고서 목록 (보고서를 못 가져와도 로그인은 되게 함)
 	choices = []
 	try:
-		reports = search_reports()
+		reports = search_reports(user_id=owner_filter(user))
 		for report in reports:
 			choices.append((report.title, report.report_id))
 	except Exception:

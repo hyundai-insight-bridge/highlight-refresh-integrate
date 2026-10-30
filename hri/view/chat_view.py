@@ -6,7 +6,7 @@ import gradio as gr
 from hri.dao.qa_log_dao import update_feedback
 from hri.domain.schemas import AnswerResult, TermCard
 from hri.exception.errors import ExternalApiError, InvalidInputError, OutputFormatError
-from hri.service.report_service import search_reports
+from hri.service.report_service import owner_filter, search_reports
 from hri.service.term_service import MAX_TERM_LENGTH, explain_term
 
 logger = logging.getLogger(__name__)
@@ -182,10 +182,11 @@ def build_chat_tab():
 def refresh_report_choices(state: dict, selected: list[int] | None):
 	"""보고서 드롭다운의 선택지를 DB의 보고서 목록으로 채운다. (질의응답 탭을 열 때 실행)
 
-	선택지는 (제목, report_id) 쌍이다. 이미 고른 보고서가 있으면 그대로 두고,
+	선택지는 (제목, report_id) 쌍이다. 로그인한 사용자 기준으로 일반 사용자는 본인이 올린 보고서만,
+	관리자는 전체를 보여 준다. 이미 고른 보고서가 있으면 그대로 두고,
 	없으면 보고서 목록 화면에서 고른 state['report_ids']를 고른 상태로 둔다. 목록에 없는 번호는 뺀다.
 	"""
-	reports = search_reports("")
+	reports = search_reports("", user_id=owner_filter((state or {}).get("user")))
 	choices = [(r.title, r.report_id) for r in reports]
 	existing = {r.report_id for r in reports}
 	wanted = selected or (state or {}).get("report_ids") or []
