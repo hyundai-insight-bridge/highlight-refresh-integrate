@@ -29,6 +29,26 @@ from hri.service.indicator_service import PLOT_DIR, _use_korean_font
 from hri.service.report_service import search_reports
 from hri.util.logger import safe_call
 
+# 기록이 없는 표 대신 보여 줄 문구
+NO_STATS_MESSAGE = "기록된 통계가 없습니다."
+
+# app.py가 관리자 탭의 업로드 버튼 click을 연결할 때 쓰는 컴포넌트 모음 (upload_components와 같은 방식)
+admin_components = {}
+
+
+def _table_or_message(table: str | None) -> str:
+	"""
+	표에 기록이 없으면 안내 문구로 바꾸기
+
+	table_to_markdown()이 만든 표가 머리글·구분선 두 줄뿐이면(기록 없음) '기록된 통계가 없습니다.'를,
+	기록이 있으면 표를 그대로 돌려준다.
+
+	입력: table (마크다운 표)
+	출력: str (표 또는 안내 문구)
+	"""
+	if table == None or table.count("\n") <= 1:
+		return NO_STATS_MESSAGE
+	return table
 
 def get_dashboard_data() -> DashboardData:
 	"""
@@ -151,9 +171,9 @@ def build_admin_tab():
 	- 관리자 계정에만 보이도록 처음에는 숨겨 둔다 (visible=False, 관리자가 로그인하면 on_login이 보이게 함)
 	- 새로고침 버튼은 state가 필요 없어서 여기서 바로 on_refresh()와 연결한다
 	- 새로고침 버튼은 화면 오른쪽 위에 둔다
+	- 표마다 작은 제목(####)을 붙이고, 같은 구역의 표는 gr.Row·gr.Column으로 나란히 둔다 (차트는 높이 480으로 넓게)
 	- 관리자 탭이 선택되면(관리자가 로그인하면 on_login이 이 탭을 선택함) 새로고침을 누르지 않아도 on_refresh()로 바로 채운다
 	- 차트(gr.Image)와 차트 안내 문구는 로그인 전에는 보이지 않는다 (관리자 탭이 선택되어 갱신되면 차트가 있을 때는 차트를, 없을 때는 '일별 질문 수: 표시할 데이터가 없습니다.'를 보여 줌)
-	새로고침하면 차트가 있으면 차트를, 없으면 '일별 질문 수: 표시할 데이터가 없습니다.'를 보여 준다
 
 	입력: 없음
 	출력: gr.Tab (관리자 탭)
@@ -164,32 +184,52 @@ def build_admin_tab():
 			gr.Markdown("## 관리자 대시보드")
 			refresh_btn = gr.Button("새로고침", variant="primary", scale=0, min_width=120)
 
-		# 사용 현황
+		# 사용 현황 (표 3개는 한 줄에 나란히, 차트는 아래에 넓게)
 		gr.Markdown("### 사용 현황")
-		top_questions = gr.Markdown()
-		daily_chart = gr.Image(label="일별 질문 수·평균 응답 시간", interactive=False, visible=False)
+		with gr.Row():
+			with gr.Column():
+				gr.Markdown("#### 질문 TOP 10")
+				top_questions = gr.Markdown()
+			with gr.Column():
+				gr.Markdown("#### 페르소나별 사용 비율")
+				persona_ratio = gr.Markdown()
+			with gr.Column():
+				gr.Markdown("#### 처리 방식별 비율")
+				route_ratio = gr.Markdown()
+		daily_chart = gr.Image(label="일별 질문 수·평균 응답 시간", interactive=False, visible=False, height=480)
 		daily_chart_message = gr.Markdown()
-		persona_ratio = gr.Markdown()
-		route_ratio = gr.Markdown()
 
-		# 답변 품질
+		# 답변 품질 (응답 비율은 위에, 표 2개는 나란히)
 		gr.Markdown("### 답변 품질")
 		source_ratio = gr.Markdown()
-		feedback_ratio = gr.Markdown()
-		no_source_questions = gr.Markdown()
+		with gr.Row():
+			with gr.Column():
+				gr.Markdown("#### 👍/👎 피드백 비율")
+				feedback_ratio = gr.Markdown()
+			with gr.Column():
+				gr.Markdown("#### 근거 없는 질문 (보고서 보강 후보)")
+				no_source_questions = gr.Markdown()
 
 		# 성능·비용
 		gr.Markdown("### 성능·비용")
 		perf_cost = gr.Markdown()
+		gr.Markdown("#### flow별 토큰·원화 비용")
 		usage_by_flow = gr.Markdown()
 
-		# 문서 관리
-		gr.Markdown("### 문서 관리")
-		reports = gr.Markdown()
-
-		# 운영 상태
-		gr.Markdown("### 운영 상태")
-		recent_errors = gr.Markdown()
+		# 문서 관리·운영 상태 (나란히)
+		with gr.Row():
+			with gr.Column():
+				gr.Markdown("### 문서 관리")
+				gr.Markdown("#### 보고서 업로드")
+				upload_file = gr.File(label="보고서 PDF", file_types=[".pdf"], file_count="multiple", type="filepath")
+				upload_btn = gr.Button("업로드", variant="primary")
+				upload_result = gr.Markdown()
+				gr.Markdown("#### 보고서 목록")
+				reports = gr.Markdown()
+			with gr.Column():
+				gr.Markdown("### 운영 상태")
+				gr.Markdown("#### 최근 에러 로그")
+				recent_errors = gr.Markdown()
 
 	# on_refresh()가 돌려주는 순서와 같게, 화면 위에서 아래 순서
 	outputs = [
@@ -205,6 +245,9 @@ def build_admin_tab():
 
 	# 관리자 탭이 선택되면(로그인하면 자동 선택됨) 버튼을 누르지 않아도 바로 갱신
 	admin_tab.select(fn=on_refresh, outputs=outputs)
+
+	# 업로드 버튼은 state·다른 탭 드롭다운이 필요해서 app.py에서 on_upload()와 연결한다
+	admin_components.update(file=upload_file, upload_btn=upload_btn, result=upload_result, outputs=outputs)
 
 	return admin_tab
 
@@ -244,18 +287,18 @@ def on_refresh():
 		daily_chart_message = "일별 질문 수: 표시할 데이터가 없습니다."
 
 	return (
-		data.top_questions,
+		_table_or_message(data.top_questions),
 		daily_chart,
 		daily_chart_message,
-		data.persona_ratio,
-		data.route_ratio,
+		_table_or_message(data.persona_ratio),
+		_table_or_message(data.route_ratio),
 		source_ratio,
-		data.feedback_ratio,
-		data.no_source_questions,
+		_table_or_message(data.feedback_ratio),
+		_table_or_message(data.no_source_questions),
 		perf_cost,
-		data.usage_by_flow,
-		data.reports,
-		data.recent_errors
+		_table_or_message(data.usage_by_flow),
+		_table_or_message(data.reports),
+		_table_or_message(data.recent_errors)
 	)
 
 
@@ -271,6 +314,7 @@ def plot_daily_counts(rows: list[dict]) -> str:
 	2. 한글 글꼴을 정한다 (장유빈 님 _use_korean_font() 재사용, 못 찾으면 기본 글꼴)
 	3. 위 그래프에 질문 수(건), 아래 그래프에 평균 응답 시간(ms)을 선으로 그린다
 	   (한 그래프에 두 선을 그리면 날짜가 적을 때 선이 겹쳐 보여서 나눔, 가로축 날짜는 두 그래프가 함께 씀)
+		(질문 수는 건수라서 세로축 눈금을 정수로만 표시)
 	4. data/plots/에 daily_uuid.png로 저장하고 그림을 닫는다 (지표 비교 차트와 같은 폴더)
 
 	- 화면 없는 서버에서도 그릴 수 있게 matplotlib.use("Agg")를 쓴다
@@ -283,6 +327,7 @@ def plot_daily_counts(rows: list[dict]) -> str:
 
 	matplotlib.use("Agg")
 	import matplotlib.pyplot as plt
+	from matplotlib.ticker import MaxNLocator
 
 	# 1) 가로축(날짜)·세로축(질문 수, 평균 응답 시간) 값 나누기
 	days = []
@@ -308,6 +353,7 @@ def plot_daily_counts(rows: list[dict]) -> str:
 	ax1.plot(days, counts, marker="o", color="C0")
 	ax1.set_title("일별 질문 수")
 	ax1.set_ylabel("질문 수 (건)")
+	ax1.yaxis.set_major_locator(MaxNLocator(integer=True))
 
 	ax2.plot(days, avg_ms, marker="s", color="C1")
 	ax2.set_title("일별 평균 응답 시간")
