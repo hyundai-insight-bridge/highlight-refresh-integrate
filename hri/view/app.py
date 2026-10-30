@@ -136,6 +136,9 @@ def build_app():
 			# 로그인 탭
 			login_tab = build_login_tab()
 
+			# 관리자 탭 (관리자 로그인 때 선택이 되려면 숨겨진 탭들보다 앞에 있어야 해서 로그인 탭 바로 뒤에 둠)
+			admin_tab = build_admin_tab()			
+
 			# 보고서 탭
 			with gr.Tab("보고서", id="report", visible=False) as report_tab:
 				with gr.Tabs():
