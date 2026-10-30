@@ -15,7 +15,7 @@ from hri.view.report_view import build_upload_tab, build_report_list_panel, on_v
 from hri.view.summary_view import build_summary_tab, on_summarize, on_request, summary_components
 from hri.view.chat_view import build_chat_tab, chat_components, connect_chat_events, refresh_report_choices
 from hri.view.indicator_view import on_compare
-from hri.view.history_view import build_history_tab, history_components, on_restore
+from hri.view.history_view import build_history_tab, history_components, on_load_history, on_restore
 from hri.view.admin_view import build_admin_tab
 
 
@@ -64,6 +64,7 @@ def build_app():
 	- 요약하기 버튼 → on_summarize (선택한 보고서 요약 보여주기)
 	- 요청 실행 버튼 → on_request (자연어 요청 결과·실행한 도구 보여주기)
 	  (업로드·요약 버튼은 다른 탭의 드롭다운이나 state가 필요해서 모든 탭을 만든 뒤 여기서 연결한다)
+	- 내 기록 탭을 열면 → on_load_history (대화별 기록 표·대화 선택 목록 채우기)
 
 	입력: 없음
 	출력: gr.Blocks (만든 화면)
@@ -131,6 +132,13 @@ def build_app():
 			fn=on_view_summary,
 			inputs=state,
 			outputs=[tabs, summary_components["report_dropdown"]]
+		)
+
+		# 내 기록 탭을 열면 기록 표·대화 선택 목록 채우기
+		history_tab.select(
+			fn=on_load_history,
+			inputs=state,
+			outputs=[history_components["table"], history_components["session_dropdown"]]
 		)
 		
 		# 대화 이어가기 버튼 누르면 질의응답 탭 Chatbot에 이전 대화 채우기

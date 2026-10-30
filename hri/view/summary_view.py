@@ -1,6 +1,7 @@
 """요약·분석 탭 · build_summary_tab, on_summarize, on_request (김희진)"""
 import logging
 import gradio as gr
+from hri.util.logger import safe_call
 from hri.exception.errors import OutputFormatError
 from hri.service.report_service import search_reports
 
@@ -100,6 +101,7 @@ def build_summary_tab():
     )
     return tab
 
+@safe_call
 def on_summarize(report_ids: list[int]) -> str:
     """요약하기 버튼: 선택한 보고서마다 summarize_report()를 호출해 Markdown으로 보여 준다.
     캐시가 있는 보고서는 LLM을 부르지 않고 바로 나온다.
@@ -128,6 +130,7 @@ def on_summarize(report_ids: list[int]) -> str:
             parts.append(_summary_markdown(title, summary))
     return "\n\n---\n\n".join(parts)
 
+@safe_call
 def on_request(request: str, report_ids: list[int]) -> str:
     """요청 실행 버튼: 자연어 요청을 run_agent_with_tools()에 보내고 결과와 실행한 도구 이름을 보여 준다.
     보고서를 고르지 않아도 실행한다 (ECOS 조회처럼 보고서가 필요 없는 도구가 있고, 보고서가 필요한 도구는 도구 쪽에서 안내한다).

@@ -9,13 +9,13 @@ logger = logging.getLogger(__name__)
 
 MAX_ATTEMPTS = 2 # 형식이 어긋났을 때 시도하는 횟수 (첫 1번 + 재시도 1번)
 MAX_SECTION_CHARS = 8000 # 섹션 원문을 LLM에 보내는 최대 글자 수
-SECTION_MAX_TOKENS = 600
-THREE_LINES_MAX_TOKENS = 800
+SECTION_MAX_TOKENS = 3000
+THREE_LINES_MAX_TOKENS = 3000
 LINE_MAX_CHARS = 60 # ThreeLineSummary.lines 설명의 "각 줄 60자 이내"와 같은 값
 MIN_MERGE_REPORTS = 2 # 병합하려면 필요한 보고서 수
 MAX_MERGE_CHARS = 4000 # 보고서 1건의 섹션 요약을 LLM에 보내는 최대 글자 수
-MERGE_MAX_TOKENS = 1000
-VERIFY_MAX_TOKENS = 1200
+MERGE_MAX_TOKENS = 4000
+VERIFY_MAX_TOKENS = 4000
 MAX_REPORT_ROWS = 30 # LLM에 보내는 보고서 수치 줄 수
 MAX_ECOS_ROWS = 20 # LLM에 보내는 ECOS 값 줄 수
 
