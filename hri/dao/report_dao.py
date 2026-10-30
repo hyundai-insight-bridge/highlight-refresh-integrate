@@ -74,7 +74,7 @@ def insert_report(conn: Connection, report: Report) -> int:
 	)
 	params = (
 		report.title,
-		report.publisher,
+		report.publisher or "no_publisher",
 		report.published_date,
 		report.page_count,
 		report.file_path,
