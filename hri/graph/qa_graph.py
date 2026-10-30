@@ -319,7 +319,6 @@ def save_log_node(state: QAState, config: RunnableConfig) -> dict:
 			))
 		except Exception:
 			logger.exception("질의응답 사용량 저장 실패 log_id = %s", log_id)
-	return {"log_id": log_id}
 
 
 def route_question(state: QAState) -> Literal["chat", "rewrite", "error"]:
@@ -355,7 +354,7 @@ def route_question(state: QAState) -> Literal["chat", "rewrite", "error"]:
 			{"role": "system", "content": ROUTE_SYSTEM_PROMPT},
 			{"role": "user", "content": question},
 		])
-		return decision.route
+		return decision.route if decision else "chat"
 	except Exception:
 		logger.exception("질문 라우팅 분류 실패 question = %s", question)
 		return "chat"
