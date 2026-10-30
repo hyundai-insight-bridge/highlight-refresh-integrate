@@ -141,7 +141,7 @@ def build_app():
 				with gr.Tabs():
 					# 보고서 목록·검색
 					with gr.Tab("보고서 목록·검색", id="report_list"):
-						report_list, go_summary_btn, go_chat_btn = build_report_list_panel()
+						report_list, go_summary_btn, go_chat_btn = build_report_list_panel(state)
 
 					# 지표 비교표
 					with gr.Tab("지표 비교표", id="compare"):

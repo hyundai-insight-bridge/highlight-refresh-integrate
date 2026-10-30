@@ -3,7 +3,7 @@ import gradio as gr
 import os
 import logging
 from hri.util.logger import safe_call
-from hri.service.report_service import search_reports
+from hri.service.report_service import owner_filter, search_reports
 from hri.service.document_service import upload_report
 # ---------------------------------------------------------------------
 # [장유빈] 보고서 목록·검색 화면 
@@ -19,12 +19,14 @@ CHAT_TAB_ID = "chat"  # app.py의 질의응답 탭 id (build_chat_tab과 맞출 
 report_list_components = {}
 
 
-def build_report_list_panel():
+def build_report_list_panel(state: gr.State | None = None):
 	"""보고서 목록·검색 화면을 만든다. (gr.Blocks 안에서 호출)
 
 	검색어 입력칸·검색 버튼과, 눌러서 펼치는 '보고서 목록' 메뉴(보고서 표)를 둔다.
 	메뉴를 펼치거나 검색하면 목록을 불러오고, 표에서 한 줄을 누르면 그 보고서를 선택한다.
 	선택한 보고서의 report_id는 state['report_ids']에 담겨 요약·질의응답 탭으로 넘어간다.
+	state를 받으면 로그인한 사용자 기준으로 목록을 걸러 보여 준다
+	(일반 사용자는 본인이 올린 보고서만, 관리자는 전체).
 
 	반환: (화면 Column, '요약 보기' 버튼, '질의응답으로 이동' 버튼)
 	표 선택(table.select)과 이동 버튼의 click 연결은 app.py의 build_app()에서 한다
@@ -58,26 +60,30 @@ def build_report_list_panel():
 		listed_ids = gr.State([])
 
 	outputs = [table, listed_ids, message]
+	# 로그인한 사용자별로 걸러 보여 주려고 state를 같이 넘긴다 (state가 없으면 검색어만)
+	inputs = [keyword, state] if state is not None else [keyword]
 	# 메뉴를 펼칠 때 목록을 불러온다 (검색어가 비어 있으면 전체 목록)
-	list_menu.expand(on_report_search, inputs=keyword, outputs=outputs)
+	list_menu.expand(on_report_search, inputs=inputs, outputs=outputs)
 	# 검색하면 결과를 채우고, 접혀 있으면 메뉴를 펼쳐서 보여 준다
-	search_btn.click(on_report_search, inputs=keyword, outputs=outputs).then(
+	search_btn.click(on_report_search, inputs=inputs, outputs=outputs).then(
 		lambda: gr.update(open=True), outputs=list_menu
 	)
-	keyword.submit(on_report_search, inputs=keyword, outputs=outputs).then(
+	keyword.submit(on_report_search, inputs=inputs, outputs=outputs).then(
 		lambda: gr.update(open=True), outputs=list_menu
 	)
 	report_list_components.update(table=table, listed_ids=listed_ids, message=message)
 	return panel, go_summary_btn, go_chat_btn
 
 
-def on_report_search(keyword: str):
-	"""검색어로 보고서를 찾아 표에 넣을 값을 만든다.
+def on_report_search(keyword: str, state: dict | None = None):
+	"""검색어로 보고서를 찾아 표에 넣을 값을 만든다. (로그인한 사용자 기준)
 
+	일반 사용자는 본인이 올린 보고서만, 관리자는 전체를 찾는다. 로그인 전이면 아무것도 찾지 않는다.
 	반환: (표 행 목록, 각 행의 report_id 목록, 안내 문구)
 	결과가 없으면 빈 표와 '검색 결과가 없습니다'를 돌려준다.
 	"""
-	reports = search_reports(keyword or "")
+	user = (state or {}).get("user")
+	reports = search_reports(keyword or "", user_id=owner_filter(user))
 	if not reports:
 		return [], [], NO_RESULT_MESSAGE
 	rows = [
@@ -214,6 +220,7 @@ def on_upload(file_paths: list[str] | None, state: dict):
 	2. 파일마다 '[번호/전체] 파일명' 블록을 만들고, progress 이벤트마다 끝난 단계를 갱신한다
 	3. 한 파일이 실패해도(검증 실패 등) 그 블록에 사유를 적고 다음 파일로 넘어간다.
 	4. 모두 끝나면 성공한 파일이 있을 때만 search_reports()로 요약, 질의응답 탭 드롭다운 choices를 갱신한다.
+	   (로그인한 사용자 기준: 일반 사용자는 본인 보고서만, 관리자는 전체)
 	
 	yield 값: (진행/결과 Markdown, 요약 탭 드롭다운 갱신, 질의응답 탭 드롭다운 갱신)
 	"""
@@ -270,7 +277,7 @@ def on_upload(file_paths: list[str] | None, state: dict):
 	dropdown = keep
 	if success_count:
 		try:
-			dropdown = gr.update(choices=[(r.title, r.report_id) for r in search_reports()])
+			dropdown = gr.update(choices=[(r.title, r.report_id) for r in search_reports(user_id=owner_filter(user))])
 		except Exception:
 			logger.exception("보고서 목록 갱신 실패")
 
