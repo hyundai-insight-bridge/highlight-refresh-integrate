@@ -127,6 +127,7 @@ CREATE TABLE IF NOT EXISTS indicators (
     value         DOUBLE       NOT NULL,
     unit          VARCHAR(20)  NULL     COMMENT '%, %p, 억 원, 조 원',
     period        VARCHAR(20)  NULL     COMMENT '예: 2027, 2027Q1',
+    page          INT          NULL     COMMENT '출처 쪽(1부터). 표·차트는 그 쪽, 본문은 섹션 시작 쪽',
     source        ENUM('text','table','chart') NOT NULL DEFAULT 'text',
     needs_review  BOOLEAN      NOT NULL DEFAULT FALSE COMMENT 'TRUE면 비교표에 *',
     PRIMARY KEY (indicator_id),

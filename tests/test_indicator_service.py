@@ -11,8 +11,8 @@ from hri.service.indicator_service import (
 	normalize_indicator_name,
 )
 
-def _ind(name="경제성장률", value=2.0, unit="%", period="2027", source="text", needs_review=False) -> Indicator:
-	return Indicator(name=name, value=value, unit=unit, period=period, source=source, needs_review=needs_review)
+def _ind(name="경제성장률", value=2.0, unit="%", period="2027", source="text", needs_review=False, page=None) -> Indicator:
+	return Indicator(name=name, value=value, unit=unit, period=period, source=source, needs_review=needs_review, page=page)
 
 
 def _use(monkeypatch, saved=None, text="본문", result=None):
@@ -147,6 +147,7 @@ def test_prompt_mentions_key_rules():
 	assert "(추정)" in INDICATOR_SYSTEM_PROMPT
 	assert "needs_review" in INDICATOR_SYSTEM_PROMPT
 	assert "YYYYQn" in INDICATOR_SYSTEM_PROMPT
+	assert "page" in  INDICATOR_SYSTEM_PROMPT
 
 # ---------------- 이름 통일표 ----------------
 def test_every_alias_maps_to_its_canonical_name():
@@ -161,3 +162,19 @@ def test_aliases_are_not_shared_between_indicators():
 		for alias in [canonical, *aliases]:
 			key = indicator_service._name_key(alias)
 			assert seen.setdefault(key, canonical) == canonical, f"{alias!r}가 {seen[key]!r}와 {canonical!r}에 모두 있습니다"
+
+# ---------------- 출처 쪽 ----------------
+def test_page_is_kept_when_cleaning(monkeypatch):
+	_use(monkeypatch, result=IndicatorList(indicators=[_ind(page=12), _ind("실업률", 3.1, page=None)]))
+	assert [i.page for i in extract_indicators(7)] == [12, None]
+
+
+@pytest.mark.parametrize("page", [0, -3])
+def test_invalid_page_becomes_none(monkeypatch, page):
+	_use(monkeypatch, result=IndicatorList(indicators=[_ind(page=page)]))
+	assert [i.page for i in extract_indicators(7)] == [None]
+
+
+def test_page_does_not_split_duplicates(monkeypatch):
+	_use(monkeypatch, result=IndicatorList(indicators=[_ind(page=3), _ind(page=9)]))
+	assert [i.page for i in extract_indicators(7)] == [3]  # 이름·시점·값·단위가 같으면 먼저 나온 것만 남는다
