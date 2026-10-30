@@ -23,6 +23,7 @@ class DashboardData(BaseModel):
 	[2차] get_dashboard_data_v2()가 채움 (1차만 만들 때는 None)
 	daily_chart: 일별 질문 수·평균 응답 시간 추이 차트 PNG 경로 (기록이 없으면 None)
 	persona_ratio: 페르소나별 사용 비율 (마크다운 표)
+	route_ratio: 질문 처리 방식(보고서 근거 답변·자료에 없음·잡담·오류)별 비율 (마크다운 표)
 	feedback_ratio: 👍/👎 피드백 비율 (마크다운 표)
 	no_source_questions: 근거 없는 질문 목록 (마크다운 표)
 	"""
@@ -37,5 +38,6 @@ class DashboardData(BaseModel):
 
 	daily_chart: Optional[str] = None
 	persona_ratio: Optional[str] = None
+	route_ratio: Optional[str] = None
 	feedback_ratio: Optional[str] = None
 	no_source_questions: Optional[str] = None
