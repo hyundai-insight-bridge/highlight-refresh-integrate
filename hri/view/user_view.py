@@ -237,21 +237,6 @@ def on_login(user_id: str, password: str):
 		""  # 메시지 지우기
 	)
 
-	# 5) 로그인 탭은 숨기고 나머지 탭은 보여줌
-	return (
-		state,
-		gr.update(visible="hidden"),  # 로그인 탭
-		gr.update(visible=True),  # 보고서 탭
-		gr.update(visible=True),  # 요약 탭
-		gr.update(visible=True),  # 질의응답 탭
-		gr.update(visible=True),  # 내 기록 탭
-		gr.update(visible=show_admin),  # 관리자 탭
-		gr.update(visible=True),  # 로그아웃 버튼
-		gr.Tabs(selected="chat"),  # 질의응답 탭으로 이동
-		gr.update(choices=choices, value=[]),  # 비교할 보고서 목록
-		""  # 메시지 지우기
-	)
-
 
 def on_register(user_id: str, password: str, name: str):
 	"""
