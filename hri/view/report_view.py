@@ -22,27 +22,30 @@ report_list_components = {}
 def build_report_list_panel(state: gr.State | None = None):
 	"""보고서 목록·검색 화면을 만든다. (gr.Blocks 안에서 호출)
 
-	검색어 입력칸·검색 버튼과, 눌러서 펼치는 '보고서 목록' 메뉴(보고서 표)를 둔다.
-	메뉴를 펼치거나 검색하면 목록을 불러오고, 표에서 한 줄을 누르면 그 보고서를 선택한다.
+	'보고서 라이브러리' 제목 줄에 검색어 입력칸·검색 버튼을 두고, 그 아래에 '보고서 목록' 메뉴(보고서 표)를 펼쳐 둔다.
+	보고서 탭을 열거나(app.py) 메뉴를 다시 펼치거나 검색하면 목록을 불러오고, 표에서 한 줄을 누르면 그 보고서를 선택한다.
 	선택한 보고서의 report_id는 state['report_ids']에 담겨 요약·질의응답 탭으로 넘어간다.
 	state를 받으면 로그인한 사용자 기준으로 목록을 걸러 보여 준다
 	(일반 사용자는 본인이 올린 보고서만, 관리자는 전체).
 
 	반환: (화면 Column, '요약 보기' 버튼, '질의응답으로 이동' 버튼)
 	표 선택(table.select)과 이동 버튼의 click 연결은 app.py의 build_app()에서 한다
-	(표·report_id 목록·안내 문구는 report_list_components로 꺼내 쓴다).
+	(검색어·표·report_id 목록·안내 문구는 report_list_components로 꺼내 쓴다).
 	"""
-	with gr.Column() as panel:
-		with gr.Row():
+	with gr.Column(variant="panel") as panel:
+		# 제목은 왼쪽, 검색칸·검색 버튼은 오른쪽 (UI 레퍼런스: '보고서 라이브러리' 머리줄)
+		with gr.Row(equal_height=True):
+			gr.Markdown("### 보고서 라이브러리")
 			keyword = gr.Textbox(
-				label="검색어",
+				show_label=False,
 				placeholder="제목 또는 발행기관 (비워 두고 검색하면 전체 목록)",
-				scale=4,
+				container=False,
+				scale=2,
 			)
-			search_btn = gr.Button("검색", variant="primary", scale=1)
+			search_btn = gr.Button("검색", variant="primary", scale=0, min_width=90)
 
-		# 눌러서 펼치는 보고서 목록 (처음에는 접혀 있음)
-		with gr.Accordion("보고서 목록 (눌러서 펼치기)", open=False) as list_menu:
+		# 보고서 목록 (처음부터 펼쳐 둠, 보고서 탭을 열면 app.py가 목록을 불러온다)
+		with gr.Accordion("보고서 목록", open=True) as list_menu:
 			table = gr.Dataframe(
 				headers=TABLE_HEADERS,
 				datatype=["str", "str", "str", "number"],
@@ -54,7 +57,7 @@ def build_report_list_panel(state: gr.State | None = None):
 
 		with gr.Row():
 			go_summary_btn = gr.Button("요약 보기")
-			go_chat_btn = gr.Button("질의응답으로 이동")
+			go_chat_btn = gr.Button("질의응답으로 이동", variant="primary")
 
 		# 표의 각 줄이 어떤 report_id인지 기억해 두는 값 (표에는 report_id 열이 없다)
 		listed_ids = gr.State([])
@@ -71,7 +74,7 @@ def build_report_list_panel(state: gr.State | None = None):
 	keyword.submit(on_report_search, inputs=inputs, outputs=outputs).then(
 		lambda: gr.update(open=True), outputs=list_menu
 	)
-	report_list_components.update(table=table, listed_ids=listed_ids, message=message)
+	report_list_components.update(keyword=keyword, table=table, listed_ids=listed_ids, message=message)
 	return panel, go_summary_btn, go_chat_btn
 
 
