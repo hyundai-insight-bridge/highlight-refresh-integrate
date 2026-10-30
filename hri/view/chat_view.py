@@ -20,6 +20,50 @@ DEFAULT_PERSONA = "실무자"
 DEFAULT_K = 4
 MAX_SUGGESTIONS = 3  # 추천 질문 버튼 개수
 NEED_LOGIN_MESSAGE = "로그인 후 이용해 주세요."
+
+# 소스·채팅 제목 칸의 위아래 스크롤 화살표 숨기기 (head에 넣는 스타일, rem·em만 씀)
+CHAT_TITLE_STYLE = """
+<style>
+#chat-source-col,
+#chat-chat-col,
+#chat-source-title,
+#chat-chat-title {
+	overflow: visible;
+	scrollbar-width: none;
+}
+#chat-source-col *,
+#chat-chat-col *,
+#chat-source-title *,
+#chat-chat-title * {
+	scrollbar-width: none;
+}
+#chat-source-col::-webkit-scrollbar,
+#chat-chat-col::-webkit-scrollbar,
+#chat-source-col *::-webkit-scrollbar,
+#chat-chat-col *::-webkit-scrollbar,
+#chat-source-title *::-webkit-scrollbar,
+#chat-chat-title *::-webkit-scrollbar {
+	display: none;
+}
+/* 소스·채팅 두 칸을 창 높이에 맞춤: 페이지 전체는 스크롤되지 않고, 남는 내용은 각 칸 안에서만 스크롤 */
+#chat-source-col,
+#chat-chat-col {
+	height: calc(100vh - 6rem);
+	overflow: hidden;
+}
+#chat-source-col {
+	overflow-y: auto;
+}
+#chat-bot {
+	flex: 1 1 auto;
+	min-height: 0;
+	height: auto;
+}
+#chat-bot .bubble-wrap {
+	overflow-y: auto;
+}
+</style>
+"""
 ERROR_MESSAGE = "답변을 만드는 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요."
 
 # app.py·다른 담당자가 컴포넌트를 꺼내 쓸 때 쓰는 모음 (login_components 등과 같은 방식)
@@ -135,8 +179,8 @@ def build_chat_tab():
 	with gr.Tab("질의응답", id=CHAT_TAB_ID, visible=False) as tab:
 		with gr.Row(equal_height=False):
 			# 왼쪽: 소스 (보고서 선택·페르소나·검색 옵션, 답변 뒤에는 출처)
-			with gr.Column(scale=3, variant="panel"):
-				gr.Markdown("#### 소스")
+			with gr.Column(scale=3, variant="panel", elem_id="chat-source-col"):
+				gr.Markdown("#### 소스", elem_id="chat-source-title")
 				report_dropdown = gr.Dropdown(label="보고서 선택 (여러 개 가능)", choices=[], multiselect=True)
 				persona = gr.Radio(PERSONA_CHOICES, value=DEFAULT_PERSONA, label="페르소나")
 				with gr.Accordion("검색 옵션", open=False):
@@ -145,8 +189,8 @@ def build_chat_tab():
 				# 출처: 답변이 끝나면 respond_stream()이 채운다 (없으면 빈칸)
 				sources = gr.Markdown()
 			# 가운데: 채팅 (추천 질문 → 대화창 → 질문 입력칸)
-			with gr.Column(scale=6, variant="panel"):
-				gr.Markdown("#### 채팅")
+			with gr.Column(scale=6, variant="panel", elem_id="chat-chat-col"):
+				gr.Markdown("#### 채팅", elem_id="chat-chat-title")
 				# 추천 질문: 처음에는 시작 질문(STARTER_QUESTIONS, 류현수)을 보여 주고, 답변이 끝나면 후속 질문으로 바꾼다
 				message = gr.Textbox(
 					show_label=False,
@@ -158,7 +202,8 @@ def build_chat_tab():
 				)
 				with gr.Row():
 					suggest_buttons = build_suggest_buttons(message)
-				chatbot = gr.Chatbot(show_label=False, height=520)
+				# 높이는 CHAT_TITLE_STYLE에서 창 크기에 맞춘다 (대화창 안에서만 스크롤)
+				chatbot = gr.Chatbot(show_label=False, elem_id="chat-bot")
 				# 피드백: 처음에는 숨기고, 기록(log_id)이 남은 답변이 끝나면 보인다 (connect_feedback_events, 류현수)
 				with gr.Row():
 					like_btn = gr.Button("👍", visible=False, scale=0, min_width=60, size="sm")

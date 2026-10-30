@@ -10,12 +10,12 @@ import gradio as gr
 
 from hri.config.settings import load_settings
 from hri.graph.registry import get_ingest_graph, get_qa_graph, get_summary_graph, get_agent_graph
-from hri.view.user_view import build_login_tab, on_login, on_logout, login_components
+from hri.view.user_view import build_login_tab, on_login, on_logout, login_components, LOGIN_BOX_STYLE
 from hri.view.report_view import build_upload_tab, build_report_list_panel, on_view_summary, on_go_chat, on_report_search, on_report_select, on_upload, report_list_components, upload_components
 from hri.view.summary_view import build_summary_tab, on_summarize, on_request, summary_components, on_merge
-from hri.view.chat_view import build_chat_tab, chat_components, connect_chat_events, refresh_report_choices
+from hri.view.chat_view import build_chat_tab, chat_components, connect_chat_events, refresh_report_choices, CHAT_TITLE_STYLE
 from hri.view.indicator_view import on_compare
-from hri.view.history_view import build_history_tab, history_components, on_load_history, on_restore
+from hri.view.history_view import build_history_tab, history_components, on_load_history, on_restore, on_prev_page, on_next_page, HISTORY_TABLE_STYLE
 from hri.view.admin_view import build_admin_tab
 
 
@@ -26,6 +26,25 @@ APP_THEME = gr.themes.Soft(
 	radius_size="lg",
 	font=[gr.themes.GoogleFont("Noto Sans KR"), "sans-serif"],
 )
+
+
+# 로그아웃 버튼을 탭 줄 오른쪽 끝에 올리는 스타일 (rem만 씀, 그리드 없음)
+LOGOUT_STYLE = """
+<style>
+#logout-row {
+	position: relative;
+	height: 0;
+	overflow: visible;
+	margin: 0 0 -1rem 0;
+	padding: 0;
+}
+#logout-row button {
+	position: absolute;
+	top: 0;
+	right: 0;
+}
+</style>
+"""
 
 
 def init_state():
@@ -110,7 +129,7 @@ def build_app():
 	메인 화면 만들기
 
 	gr.Blocks 안에 제목·로그아웃 버튼과 탭 6개를 gr.Tabs로 배치한다.
-	- 로그인 탭: build_login_tab() (처음에는 이 탭만 보임)
+	- 로그인 화면: build_login_tab() (탭 줄 없이 가운데 칸만 보임, 처음에는 이것만 보임)
 	- 보고서 탭: 안에 작은 탭 3개
 		- 보고서 목록·검색: build_report_list_panel()
 		- 지표 비교표: 비교할 보고서 드롭다운 + 비교 버튼 + 비교표 + 차트
@@ -139,16 +158,15 @@ def build_app():
 		# 지금 화면 내용이 누구 것인지 기억 (로그아웃해도 지우지 않음)
 		screen_owner = gr.State(None)
 
-		# 제목, 로그아웃 버튼 (로그아웃 버튼은 처음에 숨김)
-		with gr.Row():
-			# 제목은 gr.HTML로 둔다 (gr.Markdown은 칸에 스크롤이 생겨서 Windows에서 위아래 화살표가 보임)
-			gr.HTML("<h2>📊 HRI Insight Bridge - 경제분석보고서 AI 요약·질의응답</h2>")
-			logout_btn = gr.Button("로그아웃", size="sm", scale=0, visible=False)
+		# 로그아웃 버튼 (처음에는 숨김, 탭 줄 오른쪽 끝에 같은 줄로 보이게 CSS로 위치를 잡음)
+		with gr.Row(elem_id="logout-row"):
+			logout_btn = gr.Button("로그아웃", size="sm", scale=0, min_width=0, visible=False)
 
-		with gr.Tabs(selected="login") as tabs:
-			# 로그인 탭
-			login_tab = build_login_tab()
+		# 로그인 화면 (탭 줄 없이 가운데 칸만 보임, 로그인하면 숨김)
+		login_tab = build_login_tab()
 
+		# 로그인 뒤에만 보이는 탭들 (처음에는 숨김, on_login이 보이게 함)
+		with gr.Tabs(visible=False) as tabs:
 			# 관리자 탭 (관리자 로그인 때 선택이 되려면 숨겨진 탭들보다 앞에 있어야 해서 로그인 탭 바로 뒤에 둠)
 			admin_tab = build_admin_tab()			
 
@@ -227,9 +245,21 @@ def build_app():
 		history_tab.select(
 			fn=on_load_history,
 			inputs=state,
-			outputs=[history_components["table"], history_components["session_dropdown"]]
+			outputs=[history_components["table"], history_components["session_dropdown"], history_components["page_state"]]
 		)
-		
+
+		# 내 기록 표 이전·다음 페이지 버튼
+		history_components["prev_btn"].click(
+			fn=on_prev_page,
+			inputs=[state, history_components["page_state"]],
+			outputs=[history_components["table"], history_components["page_state"]]
+		)
+		history_components["next_btn"].click(
+			fn=on_next_page,
+			inputs=[state, history_components["page_state"]],
+			outputs=[history_components["table"], history_components["page_state"]]
+		)
+
 		# 대화 이어가기 버튼 누르면 질의응답 탭 Chatbot에 이전 대화 채우기
 		history_components["restore_btn"].click(
 			fn=on_restore,
@@ -313,4 +343,5 @@ def main():
 
 	# 화면 띄우기
 	demo = build_app()
-	demo.launch(server_port=7860, theme=APP_THEME)
+	# 스타일은 head로 한 번에 넣는다 (화면 안에 빈 HTML 칸을 만들면 위쪽 여백이 생겨서)
+	demo.launch(server_port=7860, theme=APP_THEME, footer_links=[], head=LOGIN_BOX_STYLE + HISTORY_TABLE_STYLE + LOGOUT_STYLE + CHAT_TITLE_STYLE)
