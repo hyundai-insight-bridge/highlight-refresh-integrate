@@ -5,7 +5,7 @@
 - build_admin_tab(): 사용 현황·답변 품질·성능 비용·문서 관리·운영 상태 화면과 새로고침 버튼 배치 (3.7.9, 2차 화면 3.7.12)
 - on_refresh(): 새로고침 버튼을 누르면 get_dashboard_data_v2() 결과로 화면을 갱신 (3.7.9, 2차 화면 3.7.12)
 - plot_daily_counts(): 일별 질문 수·평균 응답 시간 선 그래프를 PNG로 저장 (3.7.11)
-- get_dashboard_data_v2(): 1차 데이터에 일별 추이 차트·페르소나 비율·피드백 비율·근거 없는 질문 목록을 더해 가공 (3.7.11)
+- get_dashboard_data_v2(): 1차 데이터에 일별 추이 차트·페르소나 비율·처리 방식 비율·피드백 비율·근거 없는 질문 목록을 더해 가공 (3.7.11)
 """
 import uuid
 
@@ -18,6 +18,7 @@ from hri.dao.dashboard_dao import (
 	select_perf_cost,
 	select_persona_ratio,
 	select_recent_errors,
+	select_route_ratio,
 	select_source_ratio,
 	select_top_questions
 )
@@ -141,7 +142,7 @@ def build_admin_tab():
 	gr.Markdown(표)·gr.Image(차트)로 구성하고 새로고침 gr.Button을 둔다.
 
 	구역별 화면 (1차 + 2차)
-	- 사용 현황: 질문 TOP 10 표, 일별 질문 수 추이 차트, 페르소나별 사용 비율 표
+	- 사용 현황: 질문 TOP 10 표, 일별 질문 수 추이 차트, 페르소나별 사용 비율 표, 처리 방식(보고서 근거 답변·자료에 없음·잡담·오류)별 비율 표
 	- 답변 품질: '자료에 없습니다' 응답 비율, 👍/👎 피드백 비율 표, 근거 없는 질문 목록 표
 	- 성능·비용: 평균 응답 시간·원화 비용 합계, flow별 토큰 표
 	- 문서 관리: 보고서 목록 표
@@ -149,14 +150,19 @@ def build_admin_tab():
 
 	- 관리자 계정에만 보이도록 처음에는 숨겨 둔다 (visible=False, 관리자가 로그인하면 on_login이 보이게 함)
 	- 새로고침 버튼은 state가 필요 없어서 여기서 바로 on_refresh()와 연결한다
-	- 차트(gr.Image)와 차트 안내 문구는 처음에는 둘 다 보이지 않는다
-	  새로고침하면 차트가 있으면 차트를, 없으면 '일별 질문 수: 표시할 데이터가 없습니다.'를 보여 준다
+	- 새로고침 버튼은 화면 오른쪽 위에 둔다
+	- 관리자 탭이 선택되면(관리자가 로그인하면 on_login이 이 탭을 선택함) 새로고침을 누르지 않아도 on_refresh()로 바로 채운다
+	- 차트(gr.Image)와 차트 안내 문구는 로그인 전에는 보이지 않는다 (관리자 탭이 선택되어 갱신되면 차트가 있을 때는 차트를, 없을 때는 '일별 질문 수: 표시할 데이터가 없습니다.'를 보여 줌)
+	새로고침하면 차트가 있으면 차트를, 없으면 '일별 질문 수: 표시할 데이터가 없습니다.'를 보여 준다
 
 	입력: 없음
 	출력: gr.Tab (관리자 탭)
 	"""
 	with gr.Tab("관리자", id="admin", visible=False) as admin_tab:
-		refresh_btn = gr.Button("새로고침", variant="primary")
+		# 오른쪽 위 새로고침 버튼 (제목은 왼쪽, 버튼은 오른쪽 끝)
+		with gr.Row(equal_height=True):
+			gr.Markdown("## 관리자 대시보드")
+			refresh_btn = gr.Button("새로고침", variant="primary", scale=0, min_width=120)
 
 		# 사용 현황
 		gr.Markdown("### 사용 현황")
@@ -164,6 +170,7 @@ def build_admin_tab():
 		daily_chart = gr.Image(label="일별 질문 수", interactive=False, visible=False)
 		daily_chart_message = gr.Markdown()
 		persona_ratio = gr.Markdown()
+		route_ratio = gr.Markdown()
 
 		# 답변 품질
 		gr.Markdown("### 답변 품질")
@@ -184,17 +191,20 @@ def build_admin_tab():
 		gr.Markdown("### 운영 상태")
 		recent_errors = gr.Markdown()
 
-	# 새로고침 버튼 누르면 대시보드 갱신 (on_refresh()가 돌려주는 순서와 같게, 화면 위에서 아래 순서)
-	refresh_btn.click(
-		fn=on_refresh,
-		outputs=[
-			top_questions, daily_chart, daily_chart_message, persona_ratio,
-			source_ratio, feedback_ratio, no_source_questions,
-			perf_cost, usage_by_flow,
-			reports,
-			recent_errors
-		]
-	)
+	# on_refresh()가 돌려주는 순서와 같게, 화면 위에서 아래 순서
+	outputs = [
+		top_questions, daily_chart, daily_chart_message, persona_ratio, route_ratio,
+		source_ratio, feedback_ratio, no_source_questions,
+		perf_cost, usage_by_flow,
+		reports,
+		recent_errors
+	]
+
+	# 새로고침 버튼 누르면 대시보드 갱신
+	refresh_btn.click(fn=on_refresh, outputs=outputs)
+
+	# 관리자 탭이 선택되면(로그인하면 자동 선택됨) 버튼을 누르지 않아도 바로 갱신
+	admin_tab.select(fn=on_refresh, outputs=outputs)
 
 	return admin_tab
 
@@ -206,18 +216,18 @@ def on_refresh():
 
 	get_dashboard_data_v2() 결과(1차 + 2차 데이터)로 대시보드 컴포넌트를 갱신한다.
 
-	- 표(질문 TOP 10·페르소나 비율·피드백 비율·근거 없는 질문·flow별 토큰·보고서 목록·최근 에러)는 마크다운 표 그대로 보여 준다
+	- 표(질문 TOP 10·페르소나 비율·처리 방식 비율·피드백 비율·근거 없는 질문·flow별 토큰·보고서 목록·최근 에러)는 마크다운 표 그대로 보여 준다
 	- 자료 유무 응답 비율은 %로, 평균 응답 시간은 ms로, 원화 비용 합계는 원으로 보여 준다
 	- 일별 질문 수 차트
 	  - 차트가 있으면: 이미지 칸을 보이게 하고 차트를 넣고, 안내 문구는 지운다
 	  - 차트가 없으면(기록이 없음): 이미지 칸을 숨기고 '일별 질문 수: 표시할 데이터가 없습니다.'를 보여 준다
-	- 돌려주는 값 11개는 build_admin_tab()의 outputs 순서와 같아야 한다
-	  [질문 TOP 10, 일별 차트, 차트 안내 문구, 페르소나 비율,
+	  - 돌려주는 값 12개는 build_admin_tab()의 outputs 순서와 같아야 한다
+	  [질문 TOP 10, 일별 차트, 차트 안내 문구, 페르소나 비율, 처리 방식 비율,
 	   자료 유무 비율, 피드백 비율, 근거 없는 질문,
 	   응답 시간·원화 비용, flow별 토큰, 보고서 목록, 최근 에러]
 
 	입력: 없음
-	출력: tuple (값 11개)
+	출력: tuple (값 12개)
 	"""
 	data = get_dashboard_data_v2()
 
@@ -238,6 +248,7 @@ def on_refresh():
 		daily_chart,
 		daily_chart_message,
 		data.persona_ratio,
+		data.route_ratio,
 		source_ratio,
 		data.feedback_ratio,
 		data.no_source_questions,
@@ -325,11 +336,12 @@ def get_dashboard_data_v2() -> DashboardData:
 	1. get_dashboard_data()로 1차 데이터를 만든다 (DashboardData 하나에 1차·2차를 함께 담으려고)
 	2. 일별 질문 수: 기록이 있으면 plot_daily_counts()로 추이 차트를 그려 경로를 담는다 (없으면 None)
 	3. 페르소나별 사용 비율: [페르소나, 질문 수, 비율] 표 (맨 아래 ROLLUP 합계 줄은 '합계')
+	   처리 방식별 비율: [처리 방식, 질문 수, 비율] 표 (route를 한글 이름으로 바꿈, 맨 아래 합계 줄은 '합계')
 	4. 피드백 비율: [구분, 건수, 비율] 표 (👍·👎·합계)
 	5. 근거 없는 질문 목록: [질문, '자료에 없습니다' 횟수] 표
 
 	- 잡담·오류 제외: 답변 품질 통계(피드백 비율·근거 없는 질문)는 SQL에서 이미 rag·no_answer만 센다
-	  페르소나별 사용 비율은 사용 현황이라 모든 질문을 센다
+	  페르소나별 사용 비율·처리 방식별 비율은 사용 현황이라 모든 질문(잡담·오류 포함)을 센다
 	- 비율은 %로, 소수 첫째 자리까지 보여 준다
 	- 기록이 없으면 표는 머리글만, 차트는 None
 
@@ -360,6 +372,29 @@ def get_dashboard_data_v2() -> DashboardData:
 			ratio = round(row["count"] / total * 100, 1)
 			persona_table.append([row["persona"], row["count"], f"{ratio}%"])
 	data.persona_ratio = table_to_markdown(persona_table)
+	
+	# 3-2) 처리 방식(route)별 비율 (맨 아래 줄이 합계)
+	route_names = {
+		"rag": "보고서 근거 답변 (rag)",
+		"no_answer": "자료에 없음 (no_answer)",
+		"chat": "잡담 (chat)",
+		"error": "오류 (error)"
+	}
+	route_rows = select_route_ratio()
+
+	route_total = 0
+	for row in route_rows:
+		if row["route"] == None:
+			route_total = row["count"]
+
+	route_table = [["처리 방식", "질문 수", "비율"]]
+	for row in route_rows:
+		if row["route"] == None:
+			route_table.append(["합계", row["count"], ""])
+		else:
+			ratio = round(row["count"] / route_total * 100, 1)
+			route_table.append([route_names.get(row["route"], row["route"]), row["count"], f"{ratio}%"])
+	data.route_ratio = table_to_markdown(route_table)
 
 	# 4) 피드백 비율 (피드백이 있을 때만 줄 추가)
 	feedback = select_feedback_ratio()
