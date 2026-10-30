@@ -59,7 +59,6 @@ def select_report_tables(report_id: int) -> list[Table]:
 
 
 # insert_report, insert_sections, insert_chunks (김희진)
-DEFAULT_PUBLISHER = "현대경제연구원"
 def insert_report(conn: Connection, report: Report) -> int:
 	"""
 	reports 테이블에 보고서 1건을 INSERT하고 새로 생긴 report_id를 돌려준다.
@@ -73,7 +72,7 @@ def insert_report(conn: Connection, report: Report) -> int:
 	)
 	params = (
 		report.title,
-		report.publisher or DEFAULT_PUBLISHER,
+		report.publisher,
 		report.published_date,
 		report.page_count,
 		report.file_path,
