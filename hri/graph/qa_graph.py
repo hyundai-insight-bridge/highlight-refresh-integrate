@@ -308,16 +308,17 @@ def save_log_node(state: QAState, config: RunnableConfig) -> dict:
 
 	# 4) 모델별 LLM 사용량 저장
 	for model, tokens in usage.items():
-		insert_usage(LlmUsage(
-			flow="qa",
-			user_id=state["user_id"],
-			ref_id=log_id,
-			model=model,
-			input_tokens=tokens.get("input_tokens", 0),
-			output_tokens=tokens.get("output_tokens", 0),
-		))
-
-	return {"log_id": log_id}
+		try:
+			insert_usage(LlmUsage(
+				flow="qa",
+				user_id=state["user_id"],
+				ref_id=log_id,
+				model=model,
+				input_tokens=tokens.get("input_tokens", 0),
+				output_tokens=tokens.get("output_tokens", 0),
+			))
+		except Exception:
+			logger.exception("질의응답 사용량 저장 실패 log_id = %s", log_id)
 
 
 def route_question(state: QAState) -> Literal["chat", "rewrite", "error"]:
@@ -347,13 +348,16 @@ def route_question(state: QAState) -> Literal["chat", "rewrite", "error"]:
 
 	from hri.llm.llm_client import get_chat_model
 
-	classifier = get_chat_model(temperature=0).with_structured_output(RouteDecision)
-	decision = classifier.invoke([
-		{"role": "system", "content": ROUTE_SYSTEM_PROMPT},
-		{"role": "user", "content": question},
-	])
-	return decision.route
-
+	try:
+		classifier = get_chat_model(temperature=0).with_structured_output(RouteDecision)
+		decision = classifier.invoke([
+			{"role": "system", "content": ROUTE_SYSTEM_PROMPT},
+			{"role": "user", "content": question},
+		])
+		return decision.route if decision else "chat"
+	except Exception:
+		logger.exception("질문 라우팅 분류 실패 question = %s", question)
+		return "chat"
 
 def route_after_grade(state: QAState) -> Literal["generate", "no_answer"]:
 	"""grade 다음 갈 곳: has_context(state['docs'])가 True면 'generate', 아니면 'no_answer'.
