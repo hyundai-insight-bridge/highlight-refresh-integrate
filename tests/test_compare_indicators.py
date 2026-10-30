@@ -25,6 +25,11 @@ def _use(monkeypatch, by_report: dict, titles: dict | None = None, plot_dir: Pat
 	if plot_dir is not None:
 		monkeypatch.setattr(indicator_service, "PLOT_DIR", plot_dir)
 
+class _RF(_R):
+	def __init__(self, report_id, title, file_path):
+		super().__init__(report_id, title)
+		self.file_path = file_path
+
 
 def _lines(table: str) -> list[str]:
 	return table.splitlines()
@@ -229,3 +234,41 @@ def test_diff_gets_star_when_a_value_needs_review(monkeypatch):
 def test_single_report_has_no_diff_column(monkeypatch):
 	_use(monkeypatch, {1: [_ind()]}, {1: "A"})
 	assert _lines(build_compare_table([1]))[0] == "| 지표 | 시점 | 단위 | A |"
+
+
+# ---------------- 열 머리글의 파일명 ----------------
+def _use_files(monkeypatch, files: dict):
+	"""보고서 목록을 (제목, 저장 경로)가 있는 가짜로 바꾼다. files는 {report_id: (title, file_path)}."""
+	_use(monkeypatch, {rid: [_ind()] for rid in files})
+	monkeypatch.setattr(indicator_service, "search_reports", lambda keyword="": [_RF(rid, t, p) for rid, (t, p) in files.items()])
+
+
+def test_header_shows_file_name(monkeypatch):
+	_use_files(monkeypatch, {1: ("2026 경제전망", "data/raw/a.pdf"), 2: ("2027 경제전망", "data/raw/b.pdf")})
+	assert _lines(build_compare_table([1, 2]))[0] == "| 지표 | 시점 | 단위 | 2026 경제전망 (a.pdf) | 2027 경제전망 (b.pdf) | 차이(최대−최소) |"
+
+
+def test_file_name_from_windows_path(monkeypatch):
+	_use_files(monkeypatch, {1: ("A", "data\\raw\\한글 보고서.pdf"), 2: ("B", "")})
+	assert _lines(build_compare_table([1, 2]))[0] == "| 지표 | 시점 | 단위 | A (한글 보고서.pdf) | B | 차이(최대−최소) |"
+
+
+def test_same_title_and_file_gets_report_id(monkeypatch):
+	_use_files(monkeypatch, {1: ("같은 제목", "data/raw/a.pdf"), 2: ("같은 제목", "data/raw/a.pdf")})
+	assert _lines(build_compare_table([1, 2]))[0] == "| 지표 | 시점 | 단위 | 같은 제목 (a.pdf) (#1) | 같은 제목 (a.pdf) (#2) | 차이(최대−최소) |"
+
+
+def test_same_title_different_files_need_no_report_id(monkeypatch):
+	_use_files(monkeypatch, {1: ("같은 제목", "data/raw/a.pdf"), 2: ("같은 제목", "data/raw/b.pdf")})
+	assert _lines(build_compare_table([1, 2]))[0] == "| 지표 | 시점 | 단위 | 같은 제목 (a.pdf) | 같은 제목 (b.pdf) | 차이(최대−최소) |"
+
+
+def test_pipe_in_file_name_is_escaped(monkeypatch):
+	_use_files(monkeypatch, {1: ("A", "data/raw/x|y.pdf"), 2: ("B", "data/raw/b.pdf")})
+	assert "x\\|y.pdf" in build_compare_table([1, 2])
+
+
+def test_chart_legend_names_have_no_file_name(monkeypatch):
+	_use_files(monkeypatch, {1: ("A", "data/raw/a.pdf"), 2: ("B", "data/raw/b.pdf")})
+	assert indicator_service._report_titles([1, 2]) == {1: "A", 2: "B"}
+	assert indicator_service._report_titles([1, 2], with_file=True) == {1: "A (a.pdf)", 2: "B (b.pdf)"}

@@ -2,7 +2,7 @@
 import logging
 import re
 import uuid
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from pydantic import BaseModel, Field
 
@@ -140,7 +140,7 @@ def _clean_indicators(indicators: list[Indicator], report_id: int) -> list[Indic
 			continue
 		seen.add(key)
 		page = item.page if item.page is not None and item.page >= 1 else None
-		cleaned.append(item.model_copy(update={"report_id": report_id, "name": name, "period": period, "unit": unit, "page": page})) 
+		cleaned.append(item.model_copy(update={"report_id": report_id, "name": name, "period": period, "unit": unit, "page": page}))
 	return cleaned
 
 
@@ -220,10 +220,24 @@ def _format_value(value: float) -> str:
 	return "0" if text in ("-0", "") else text
 
 
-def _report_titles(report_ids: list[int]) -> dict[int, str]:
-	"""report_id → 표 머리글에 쓸 보고서 제목. 제목이 같은 보고서가 있으면 '제목 (#번호)'로 구분한다."""
-	found = {r.report_id: r.title for r in search_reports("")}
-	titles = {rid: found.get(rid) or f"보고서 #{rid}" for rid in report_ids}
+def _file_name(file_path: str) -> str:
+	"""저장 경로(data/raw/sample.pdf)에서 파일 이름(sample.pdf)만 꺼낸다. 경로가 비어 있으면 ''."""
+	return PurePosixPath((file_path or "").replace("\\", "/")).name
+
+
+def _report_titles(report_ids: list[int], with_file: bool = False) -> dict[int, str]:
+	"""report_id → 표 머리글·차트 범례에 쓸 보고서 이름.
+
+	with_file이면 '제목 (파일명.pdf)'처럼 업로드한 파일 이름을 붙인다 (파일 경로를 모르면 제목만).
+	이름이 같은 보고서가 있으면 '이름 (#번호)'로 구분한다.
+	"""
+	found = {r.report_id: r for r in search_reports("")}
+	titles: dict[int, str] = {}
+	for rid in report_ids:
+		report = found.get(rid)
+		title = (report.title if report else "") or f"보고서 #{rid}"
+		file_name = _file_name(getattr(report, "file_path", "")) if report and with_file else ""
+		titles[rid] = f"{title} ({file_name})" if file_name else title
 	counts: dict[str, int] = {}
 	for title in titles.values():
 		counts[title] = counts.get(title, 0) + 1
@@ -264,6 +278,7 @@ def _format_cell(item: Indicator) -> str:
 	text = _format_value(item.value) + (REVIEW_MARK if item.needs_review else "")
 	return f"{text} (p.{item.page})" if item.page else text
 
+
 def _diff_cell(items: list[Indicator], unit: str) -> str:
 	"""보고서들의 값 차이(최대값 − 최소값)를 칸 글자로 만든다. 값이 2개 미만이면 '-'.
 
@@ -276,10 +291,13 @@ def _diff_cell(items: list[Indicator], unit: str) -> str:
 	mark = REVIEW_MARK if any(item.needs_review for item in items) else ""
 	return f"{_format_value(max(values) - min(values))}{suffix}{mark}"
 
+
 def build_compare_table(report_ids: list[int]) -> str:
 	"""선택한 보고서들의 지표를 한 표(Markdown)로 비교한다.
 
 	행은 (지표 이름, 시점, 단위), 열은 보고서 제목이다. 그 보고서에 없는 칸은 '-'로 채우고,
+	차트에서 읽어 확인이 필요한 값(needs_review)에는 '*'를 붙인 뒤 표 아래에 설명을 적는다.
+	열 머리글은 '제목 (파일명.pdf)'처럼 업로드한 파일 이름을 함께 적는다.
 	출처 쪽을 아는 값은 '2.4 (p.12)'처럼 쪽을 함께 적고, 보고서가 2개 이상이면 맨 끝에 값 차이(최대−최소) 열을 붙인다.
 	여러 보고서에 함께 나온 지표가 위로 온다. 지표가 하나도 없으면 빈 문자열을 돌려준다.
 	"""
@@ -288,7 +306,7 @@ def build_compare_table(report_ids: list[int]) -> str:
 	if not rows:
 		return ""
 
-	titles = _report_titles(report_ids)
+	titles = _report_titles(report_ids, with_file=True)
 	header = ["지표", "시점", "단위", *(_escape_cell(titles[rid]) for rid in report_ids)]
 	with_diff = len(report_ids) >= 2  # 보고서가 하나뿐이면 비교할 대상이 없어 차이 열을 두지 않는다
 	if with_diff:
@@ -307,8 +325,6 @@ def build_compare_table(report_ids: list[int]) -> str:
 		if with_diff:
 			cells.append(_diff_cell(list(rows[key].values()), key[2]))
 		body.append([_escape_cell(key[0]), key[1], _escape_cell(key[2]) or EMPTY_CELL, *cells])
-		if with_diff:
-			cells.append(_diff_cell(list(rows[key].values()), key[2]))
 
 	table = _rows_to_markdown(header, body)
 	return f"{table}\n\n{REVIEW_NOTE}" if has_review else table
