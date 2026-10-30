@@ -15,6 +15,9 @@ SUMMARY_FAIL_MESSAGE = "요약을 만들지 못했습니다."
 SUMMARY_ERROR_MESSAGE = "요약 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요."
 REQUEST_ERROR_MESSAGE = "요청을 처리하지 못했습니다."
 EMPTY_ANSWER_MESSAGE = "요청을 처리했지만 표시할 답변이 없습니다."
+VIEW_THREE_LINES = "3줄 요약"
+VIEW_SECTIONS = "섹션별 요약"
+VIEW_CHOICES = [VIEW_THREE_LINES, VIEW_SECTIONS]
 
 # app.py, 다른 담당자가 컴포넌트를 꺼내 쓸때 쓰는 모음 (login_components 등과 같은 방식)
 summary_components = {}
@@ -54,16 +57,19 @@ def _page_label(start: int | None, end: int | None) -> str:
         return f"p.{start}"
     return f"p.{start}-{end}"
 
-def _summary_markdown(title: str, summary) -> str:
-    """보고서 1건의 요약(ReportSummary)을 화면에 보여 줄 Markdown으로 바꾼다."""
-    lines = [f"### {title}", "**3줄 요약**"]
-    lines += [f"{i}. {line}" for i, line in enumerate(summary.three_lines, 1)]
-    lines += ["", "**섹션별 요약**"]
+def _summary_markdown(title: str, summary, view: str = VIEW_THREE_LINES) -> str:
+    """보고서 1건의 요약(ReportSummary) 중 고른 방식(3줄 요약 / 섹션별 요약)만 Markdown으로 바꾼다"""
+    lines = [f"### {title}"]
 
-    for s in summary.sections:
-        pages = _page_label(s.start_page, s.end_page)
-        heading = f"**{s.title}**" + (f"({pages})" if pages else "")
-        lines.append(f"- {heading}: {s.summary}")
+    if view == VIEW_SECTIONS:
+        lines.append("**섹션별 요약**")
+        for s in summary.sections:
+            pages = _page_label(s.start_page, s.end_page)
+            heading = f"**{s.title}**" + (f"{pages}" if pages else "")
+            lines.append(f"- {heading}: {s.summary}")
+    else:
+        lines.append("**3줄 요약**")
+        lines += [f"{i}. {line}" for i, line in enumerate(summary.three_lines, 1)]
 
     return "\n".join(lines)
 
@@ -72,7 +78,7 @@ def build_summary_tab():
     (gr.Blocks의 gr.Tabs 안에서 호출)
     맨 위에 보고서 선택(여러 개 가능)을 두고, 아래를 둘로 나눈다.
     - 왼쪽: 요약 버튼과 요약 결과(3줄 요약, 섹션별 요약)
-    - 오른쪽: 자연어 요청 입려칸, 요청 실행 버튼과 분석 결과
+    - 오른쪽: 3줄 요약과 섹션별 요약 라디오 버튼, 요청 실행 버튼과 분석 결과
     탭은 로그인 전에는 숨겨 둔 채(visible=False) 만들고, 로그인하면 on_login이 보이게 한다.
     이벤트 연결은 gr.State가 필요해서 build_app()이 connect_summary_events(state)로 한다.
     
@@ -86,33 +92,31 @@ def build_summary_tab():
                 summary_result = gr.Markdown()
 
             with gr.Column(scale=1):
-                request = gr.Textbox(label="요청", placeholder="예) 선택한 보고서를 검증한 뒤 병합해 줘", lines=2)
-                request_btn = gr.Button("요청 실행")
-                request_result = gr.Markdown()
+                view_radio = gr.Radio(label="요약 방식", choices=VIEW_CHOICES, value=VIEW_THREE_LINES)
 
     summary_components.update(
         tab=tab,
         report_dropdown=report_dropdown,
         summarize_btn=summarize_btn,
         summary_result=summary_result,
-        request=request,
-        request_btn=request_btn,
-        request_result=request_result
+        view_radio=view_radio
     )
     return tab
 
 @safe_call
-def on_summarize(report_ids: list[int]) -> str:
+def on_summarize(report_ids: list[int], view: str = VIEW_THREE_LINES) -> str:
     """요약하기 버튼: 선택한 보고서마다 summarize_report()를 호출해 Markdown으로 보여 준다.
     캐시가 있는 보고서는 LLM을 부르지 않고 바로 나온다.
     한 보고서가 실패해도(OutputFormatError 등) 그 보고서 자리에만 안내 문구를 넣고 나머지는 계속한다.
 
-    입력: report_ids (선택한 보고서 번호 목록)
+    입력: report_ids (선택한 보고서 번호 목록), view (요약 방식 라디오 값: '3줄 요약' 또는 '섹션별 요약')
     출력: str (화면에 보여 줄 Markdown)
     """
     if not report_ids:
         return NEED_REPORT_MESSAGE
 
+    if view not in VIEW_CHOICES:
+        view = VIEW_THREE_LINES
     titles = _report_titles()
     parts = []
 
@@ -127,7 +131,7 @@ def on_summarize(report_ids: list[int]) -> str:
             logger.exception("요약 실패: report_id=%s", report_id)
             parts.append(f"### {title}\n{SUMMARY_ERROR_MESSAGE}")
         else:
-            parts.append(_summary_markdown(title, summary))
+            parts.append(_summary_markdown(title, summary, view))
     return "\n\n---\n\n".join(parts)
 
 @safe_call
