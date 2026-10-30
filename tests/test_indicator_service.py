@@ -4,12 +4,12 @@ import pytest
 from hri.domain.schemas import Indicator
 from hri.service import indicator_service
 from hri.service.indicator_service import (
+	INDICATOR_ALIASES,
 	INDICATOR_SYSTEM_PROMPT,
 	IndicatorList,
 	extract_indicators,
 	normalize_indicator_name,
 )
-
 
 def _ind(name="경제성장률", value=2.0, unit="%", period="2027", source="text", needs_review=False) -> Indicator:
 	return Indicator(name=name, value=value, unit=unit, period=period, source=source, needs_review=needs_review)
@@ -124,6 +124,13 @@ def test_no_indicators_found_returns_empty(monkeypatch):
 	"raw, expected",
 	[
 		("경제성장률", "경제성장률"),
+		("민간소비", "민간소비 증가율"),
+		("설비투자 증가율", "설비투자 증가율"),
+		("KOSPI", "코스피"),
+		("국고채(3년) 금리", "국고채 3년 금리"),
+		("원·달러 환율", "원/달러 환율"),
+		("GDP 대비 국가채무 비율", "국가채무 비율"),
+		("근원 CPI 상승률", "근원물가 상승률"),
 		("  GDP 성장률  ", "경제성장률"),
 		("실질GDP성장률", "경제성장률"),  # 공백이 없어도 같은 이름
 		("cpi", "소비자물가 상승률"),  # 대소문자 무시
@@ -140,3 +147,17 @@ def test_prompt_mentions_key_rules():
 	assert "(추정)" in INDICATOR_SYSTEM_PROMPT
 	assert "needs_review" in INDICATOR_SYSTEM_PROMPT
 	assert "YYYYQn" in INDICATOR_SYSTEM_PROMPT
+
+# ---------------- 이름 통일표 ----------------
+def test_every_alias_maps_to_its_canonical_name():
+	for canonical, aliases in INDICATOR_ALIASES.items():
+		for alias in [canonical, *aliases]:
+			assert normalize_indicator_name(alias) == canonical, alias
+
+
+def test_aliases_are_not_shared_between_indicators():
+	seen: dict[str, str] = {}
+	for canonical, aliases in INDICATOR_ALIASES.items():
+		for alias in [canonical, *aliases]:
+			key = indicator_service._name_key(alias)
+			assert seen.setdefault(key, canonical) == canonical, f"{alias!r}가 {seen[key]!r}와 {canonical!r}에 모두 있습니다"
