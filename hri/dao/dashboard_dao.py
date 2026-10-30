@@ -1,4 +1,4 @@
-"""대시보드 SQL · select_top_questions, select_source_ratio, select_perf_cost, select_recent_errors, select_daily_counts, select_persona_ratio, select_feedback_ratio, select_no_source_questions (임세준)
+"""대시보드 SQL · select_top_questions, select_source_ratio, select_perf_cost, select_recent_errors, select_daily_counts, select_persona_ratio, select_feedback_ratio, select_no_source_questions, select_route_ratio (임세준)
 
 관리자 대시보드 화면에 보여 줄 값을 qa_logs·llm_usage 테이블에서 집계하는 DAO.
 1차: get_dashboard_data()(3.7.8)가 이 함수들의 결과를 화면 형식으로 가공한다.
@@ -11,6 +11,7 @@
 - select_persona_ratio(): 페르소나별 질문 수 + 합계 (WITH ROLLUP)
 - select_feedback_ratio(): 👍/👎 건수·합계·비율 (WITH ROLLUP)
 - select_no_source_questions(): '자료에 없습니다'가 2회 이상 나온 질문 (보고서 보강 후보)
+- select_route_ratio(): 질문 처리 방식(route)별 질문 수 + 합계 (WITH ROLLUP)
 """
 from hri.dao.db import get_connection
 
@@ -317,6 +318,33 @@ def select_no_source_questions() -> list[dict]:
 		) AS no_source
 		WHERE count >= 2
 		ORDER BY count DESC
+	"""
+
+	with get_connection() as conn:
+		cursor = conn.cursor()
+		cursor.execute(sql)
+		rows = cursor.fetchall()
+
+	return list(rows)
+
+
+def select_route_ratio() -> list[dict]:
+	"""
+	처리 방식(route)별 질문 수 조회 (합계 행 포함)
+
+	qa_logs.route별 COUNT를 GROUP BY ... WITH ROLLUP으로 집계해 합계 행까지 한 번에 조회한다.
+	- route: rag(보고서 근거로 답변), no_answer('자료에 없습니다'), chat(잡담), error(오류)
+	- 합계 줄은 route가 None이다 (select_persona_ratio()와 같은 방식)
+	  예) [{'route': 'rag', 'count': 20}, {'route': 'no_answer', 'count': 12}, {'route': 'chat', 'count': 2}, {'route': 'error', 'count': 7}, {'route': None, 'count': 41}]
+	- 비율(각 route 수 / 합계)은 get_dashboard_data_v2()가 이 결과로 계산한다
+
+	입력: 없음
+	출력: list[dict] (route별 줄 + 맨 아래 합계 줄, 기록이 없으면 [])
+	"""
+	sql = """
+		SELECT route, COUNT(*) AS count
+		FROM qa_logs
+		GROUP BY route WITH ROLLUP
 	"""
 
 	with get_connection() as conn:
