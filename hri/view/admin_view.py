@@ -29,6 +29,26 @@ from hri.service.indicator_service import PLOT_DIR, _use_korean_font
 from hri.service.report_service import search_reports
 from hri.util.logger import safe_call
 
+# 기록이 없는 표 대신 보여 줄 문구
+NO_STATS_MESSAGE = "기록된 통계가 없습니다."
+
+# app.py가 관리자 탭의 업로드 버튼 click을 연결할 때 쓰는 컴포넌트 모음 (upload_components와 같은 방식)
+admin_components = {}
+
+
+def _table_or_message(table: str | None) -> str:
+	"""
+	표에 기록이 없으면 안내 문구로 바꾸기
+
+	table_to_markdown()이 만든 표가 머리글·구분선 두 줄뿐이면(기록 없음) '기록된 통계가 없습니다.'를,
+	기록이 있으면 표를 그대로 돌려준다.
+
+	입력: table (마크다운 표)
+	출력: str (표 또는 안내 문구)
+	"""
+	if table == None or table.count("\n") <= 1:
+		return NO_STATS_MESSAGE
+	return table
 
 def get_dashboard_data() -> DashboardData:
 	"""
@@ -200,6 +220,10 @@ def build_admin_tab():
 		with gr.Row():
 			with gr.Column():
 				gr.Markdown("### 문서 관리")
+				gr.Markdown("#### 보고서 업로드")
+				upload_file = gr.File(label="보고서 PDF", file_types=[".pdf"], file_count="multiple", type="filepath")
+				upload_btn = gr.Button("업로드", variant="primary")
+				upload_result = gr.Markdown()
 				gr.Markdown("#### 보고서 목록")
 				reports = gr.Markdown()
 			with gr.Column():
@@ -221,6 +245,9 @@ def build_admin_tab():
 
 	# 관리자 탭이 선택되면(로그인하면 자동 선택됨) 버튼을 누르지 않아도 바로 갱신
 	admin_tab.select(fn=on_refresh, outputs=outputs)
+
+	# 업로드 버튼은 state·다른 탭 드롭다운이 필요해서 app.py에서 on_upload()와 연결한다
+	admin_components.update(file=upload_file, upload_btn=upload_btn, result=upload_result, outputs=outputs)
 
 	return admin_tab
 
@@ -260,18 +287,18 @@ def on_refresh():
 		daily_chart_message = "일별 질문 수: 표시할 데이터가 없습니다."
 
 	return (
-		data.top_questions,
+		_table_or_message(data.top_questions),
 		daily_chart,
 		daily_chart_message,
-		data.persona_ratio,
-		data.route_ratio,
+		_table_or_message(data.persona_ratio),
+		_table_or_message(data.route_ratio),
 		source_ratio,
-		data.feedback_ratio,
-		data.no_source_questions,
+		_table_or_message(data.feedback_ratio),
+		_table_or_message(data.no_source_questions),
 		perf_cost,
-		data.usage_by_flow,
-		data.reports,
-		data.recent_errors
+		_table_or_message(data.usage_by_flow),
+		_table_or_message(data.reports),
+		_table_or_message(data.recent_errors)
 	)
 
 
