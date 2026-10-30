@@ -320,6 +320,8 @@ def save_log_node(state: QAState, config: RunnableConfig) -> dict:
 		except Exception:
 			logger.exception("질의응답 사용량 저장 실패 log_id = %s", log_id)
 
+	return {"log_id": log_id}
+
 
 def route_question(state: QAState) -> Literal["chat", "rewrite", "error"]:
 	"""validate 노드 다음 갈 곳을 고른다 (명세서 순서대로 확인).
