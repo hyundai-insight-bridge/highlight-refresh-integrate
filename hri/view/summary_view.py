@@ -189,7 +189,7 @@ def on_merge(report_ids: list[int]) -> str:
     names = [titles.get(i, f"보고서 {i}") for i in ids]
 
     # 2. 보고서마다 요약 준비
-    for no, (report_id, name) in enumerate(zip(ids, name), 1):
+    for no, (report_id, name) in enumerate(zip(ids, names), 1):
         yield f"⏳ 요약 준비 중 ({no}/{len(ids)}): {name}"
         try:
             _summarize_report(report_id)
