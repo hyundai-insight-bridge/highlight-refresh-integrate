@@ -40,6 +40,58 @@ def init_state():
 	}
 	return state
 
+def clear_other_user_screen(state, screen_owner):
+	"""
+	다른 사람이 로그인했을 때 이전 사용자의 화면 내용 지우기
+
+	로그아웃해도 화면 부품의 내용(대화창·요약 결과 등)은 남아 있다.
+	그래서 로그인할 때마다 "지금 화면 내용이 누구 것인지(screen_owner)"를 보고,
+	다른 사람이 로그인했으면 화면 내용을 비우고, 같은 사람이 다시 로그인했으면 그대로 둔다.
+
+	순서
+	1. 로그인에 실패했으면(state의 user가 None) 아무것도 바꾸지 않는다
+	2. 화면 주인이 없거나(처음 로그인) 같은 사람이면 화면을 그대로 두고 주인만 기록한다
+	3. 다른 사람이면 질의응답·요약·내 기록·업로드·지표 비교 화면 내용을 비운다
+
+	- 질문 기록 자체는 DB(qa_logs)에 남아 있어서, 다시 로그인하면 내 기록 탭에서 언제든 볼 수 있다
+	- 돌려주는 값 14개는 build_app()의 outputs 순서와 같아야 한다
+	  [화면 주인, 대화창, 질문 입력칸, 출처, 👍, 👎, 질의응답 보고서 선택,
+	   요약 보고서 선택, 요약 결과, 요청, 요청 결과,
+	   기록 표, 대화 선택, 업로드 결과, 비교표, 비교 차트]
+
+	입력: state (gr.State), screen_owner (지금 화면 내용의 주인 user_id, 처음에는 None)
+	출력: list (값 14개)
+	"""
+	keep = gr.update()
+
+	# 1) 로그인 실패면 그대로
+	if state["user"] == None:
+		return [screen_owner] + [keep] * 13
+
+	user_id = state["user"]["user_id"]
+
+	# 2) 처음 로그인이거나 같은 사람이면 화면 그대로
+	if screen_owner == None or screen_owner == user_id:
+		return [user_id] + [keep] * 13
+
+	# 3) 다른 사람이면 화면 내용 비우기
+	return [
+		user_id,  # 화면 주인
+		[],  # 대화창
+		"",  # 질문 입력칸
+		"",  # 출처
+		gr.update(visible=False),  # 👍
+		gr.update(visible=False),  # 👎
+		gr.update(value=[]),  # 질의응답 보고서 선택
+		gr.update(value=[]),  # 요약 보고서 선택
+		"",  # 요약 결과
+		"",  # 기록 표 (내 기록 탭을 열면 다시 채워짐)
+		gr.update(choices=[], value=None),  # 대화 선택
+		"",  # 업로드 결과
+		"",  # 비교표
+		None  # 비교 차트
+	]
+
 
 def build_app():
 	"""
@@ -65,12 +117,15 @@ def build_app():
 	- 요청 실행 버튼 → on_request (자연어 요청 결과·실행한 도구 보여주기)
 	  (업로드·요약 버튼은 다른 탭의 드롭다운이나 state가 필요해서 모든 탭을 만든 뒤 여기서 연결한다)
 	- 내 기록 탭을 열면 → on_load_history (대화별 기록 표·대화 선택 목록 채우기)
+	- 로그인 뒤 → clear_other_user_screen (다른 사람이 로그인했으면 이전 사용자의 화면 내용 비우기)
 
 	입력: 없음
 	출력: gr.Blocks (만든 화면)
 	"""
 	with gr.Blocks(title="HRI Insight Bridge") as demo:
 		state = gr.State(init_state())
+		# 지금 화면 내용이 누구 것인지 기억 (로그아웃해도 지우지 않음)
+		screen_owner = gr.State(None)
 
 		# 제목, 로그아웃 버튼 (로그아웃 버튼은 처음에 숨김)
 		with gr.Row():
@@ -106,11 +161,23 @@ def build_app():
 			history_tab = build_history_tab()
 			admin_tab = build_admin_tab()
 
-		# 로그인 버튼 누르면 로그인
+		# 로그인 버튼 누르면 로그인 → 다른 사람이 로그인했으면 이전 사용자의 화면 내용 비우기
 		login_components["login_btn"].click(
 			fn=on_login,
 			inputs=[login_components["user_id"], login_components["password"]],
 			outputs=[state, login_tab, report_tab, summary_tab, chat_tab, history_tab, admin_tab, logout_btn, tabs, compare_reports, login_components["message"]]
+		).then(
+			fn=clear_other_user_screen,
+			inputs=[state, screen_owner],
+			outputs=[
+				screen_owner,
+				chat_components["chatbot"], chat_components["message"], chat_components["sources"],
+				chat_components["like_btn"], chat_components["dislike_btn"], chat_components["report_dropdown"],
+				summary_components["report_dropdown"], summary_components["summary_result"],
+				history_components["table"], history_components["session_dropdown"],
+				upload_components["result"],
+				compare_table, compare_chart
+			]
 		)
 
 		# 로그아웃 버튼 누르면 로그아웃
@@ -179,15 +246,8 @@ def build_app():
 		# 요약하기 버튼 누르면 선택한 보고서 요약 보여주기
 		summary_components["summarize_btn"].click(
 			fn=on_summarize,
-			inputs=summary_components["report_dropdown"],
+			inputs=[summary_components["report_dropdown"],summary_components["view_radio"]],
 			outputs=summary_components["summary_result"]
-		)
-
-		# 요청 실행 버튼 누르면 자연어 요청 결과 보여주기
-		summary_components["request_btn"].click(
-			fn=on_request,
-			inputs=[summary_components["request"], summary_components["report_dropdown"]],
-			outputs=summary_components["request_result"]
 		)
 
 	return demo

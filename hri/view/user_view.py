@@ -20,6 +20,8 @@ login_components = {}
 INTRO = """# HRI Insight Bridge
 경제분석보고서(PDF)를 올리면 **텍스트·표·차트(OCR)** 까지 읽어 요약하고, 보고서에 근거해 질문에 답하는 서비스입니다.
 
+> AI 답변은 원문과 다를 수 있어요
+
 - **내부 자료**: 관리자가 올린 보고서(PDF)를 텍스트·표·차트까지 추출해 모든 사용자의 근거로 사용
 - **질의응답**: 내부 자료 + **이 대화에 첨부한 내 자료**를 함께 검색해 답변(출처에 [내부 자료]/[내 자료] 표시)
   - 첨부 자료는 그 대화에서만 쓰이며, 대화를 삭제하면 함께 삭제됩니다
@@ -137,8 +139,10 @@ def on_login(user_id: str, password: str):
 	   실패(LoginFailedError)하면 화면은 그대로 두고 안내 메시지만 보여 준다
 	3. 성공하면 사용자 정보를 gr.State에 저장할 state로 만든다
 	4. 지표 비교 탭에서 고를 보고서 목록을 search_reports()로 만든다 ((제목, report_id) 쌍)
-	5. 로그인 탭은 숨기고, 메인 탭들을 보이게 하고, 질의응답 탭으로 이동한다
-	   role이 "admin"이면 관리자 탭도 보여 준다
+	5. 로그인 탭은 숨기고, 역할(role)에 맞는 탭만 보이게 한다
+	- 일반 사용자("user"): 보고서·요약·질의응답·내 기록 탭을 보이고 질의응답 탭으로 이동
+	- 관리자("admin"): 관리자 탭만 보이고 관리자 탭으로 이동
+	(관리자는 대시보드만 쓰고, 내부 자료는 DB에 직접 넣는다)
 
 	- 돌려주는 값 11개는 build_app()의 outputs 순서와 같아야 한다
 	  [state, 로그인 탭, 보고서 탭, 요약 탭, 질의응답 탭, 내 기록 탭, 관리자 탭,
@@ -207,11 +211,30 @@ def on_login(user_id: str, password: str):
 	except Exception:
 		choices = []
 
-	# 관리자면 관리자 탭도 보여줌
+	# 관리자면 관리자 탭만, 일반 사용자면 사용자 탭들만 보여줌
 	if user.role == "admin":
 		show_admin = True
+		show_user_tabs = False
+		first_tab = "admin"
 	else:
 		show_admin = False
+		show_user_tabs = True
+		first_tab = "chat"
+
+	# 5) 로그인 탭은 숨기고 역할에 맞는 탭만 보여줌
+	return (
+		state,
+		gr.update(visible="hidden"),  # 로그인 탭
+		gr.update(visible=show_user_tabs),  # 보고서 탭
+		gr.update(visible=show_user_tabs),  # 요약 탭
+		gr.update(visible=show_user_tabs),  # 질의응답 탭
+		gr.update(visible=show_user_tabs),  # 내 기록 탭
+		gr.update(visible=show_admin),  # 관리자 탭
+		gr.update(visible=True),  # 로그아웃 버튼
+		gr.Tabs(selected=first_tab),  # 첫 화면 탭으로 이동 (관리자: 관리자 탭, 일반 사용자: 질의응답 탭)
+		gr.update(choices=choices, value=[]),  # 비교할 보고서 목록
+		""  # 메시지 지우기
+	)
 
 	# 5) 로그인 탭은 숨기고 나머지 탭은 보여줌
 	return (
