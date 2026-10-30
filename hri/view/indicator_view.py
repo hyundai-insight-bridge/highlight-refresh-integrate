@@ -3,7 +3,7 @@ import logging
 
 import gradio as gr
 
-from hri.service.indicator_service import build_compare_table, plot_indicators
+from hri.service.indicator_service import build_compare_table, build_ecos_reference, plot_indicators
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +15,7 @@ NEED_MORE_REPORTS_MESSAGE = "보고서를 2개 이상 선택하세요."
 NO_INDICATORS_MESSAGE = "선택한 보고서에서 비교할 지표를 찾지 못했습니다."
 NO_CHART_NOTE = "공통으로 나온 지표가 없어 차트는 만들지 않았습니다."
 COMPARE_ERROR_MESSAGE = "지표를 비교하는 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요."
+ECOS_PROGRESS_TEXT = "ECOS 통계를 확인하는 중..."
 
 
 def on_compare(report_ids: list[int] | None, progress=gr.Progress()) -> tuple[str, str | None]:
@@ -41,4 +42,18 @@ def on_compare(report_ids: list[int] | None, progress=gr.Progress()) -> tuple[st
 
 	if image is None:
 		table = f"{table}\n\n{NO_CHART_NOTE}"
+
+	progress(0.9, desc=ECOS_PROGRESS_TEXT)
+	ecos = _safe_ecos_reference(ids)
+	if ecos:
+		table = f"{table}\n\n{ecos}"
 	return table, image
+
+
+def _safe_ecos_reference(report_ids: list[int]) -> str:
+	"""ECOS 참고 섹션을 만든다. 실패해도 비교표는 보여 줘야 하므로 오류는 기록만 하고 빈 문자열을 돌려준다."""
+	try:
+		return build_ecos_reference(report_ids)
+	except Exception:
+		logger.exception("ECOS 참고 섹션 생성 실패")
+		return ""
