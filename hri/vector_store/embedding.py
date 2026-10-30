@@ -3,7 +3,7 @@ import numpy as np
 from openai import OpenAI
 from hri.config.settings import load_settings
 
-EMBEDDING_MODEL = "text-embedding-3-small"
+EMBEDDING_MODEL = "text-embedding-3-large"
 BATCH_SIZE = 100 # 한 번에 보내는 텍스트 수
 
 def embed_texts(texts: list[str]) -> list[list[float]]:
