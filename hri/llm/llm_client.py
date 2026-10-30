@@ -21,21 +21,23 @@ MODEL = load_settings().llm_model
 
 def get_chat_model(
     model: str | None = None,
-    temperature: float = 0.3,
+    temperature: float = 0.0,
     max_tokens: int = 4000,
+	reasoning_effort: str | None = "none",
 ) -> ChatOpenAI:
     """ChatOpenAI 모델을 만들어 반환한다."""
     return ChatOpenAI(
         model=model or MODEL,
         temperature=temperature,
         max_tokens=max_tokens,
+        reasoning_effort=reasoning_effort,
         stream_usage=True,
     )
 
 
 def ask_llm(
     messages: list[dict],
-    temperature: float = 0.3,
+    temperature: float = 0.0,
     max_tokens: int = 4000,
 ) -> tuple[str, UsageMetadata]:
     """자유 텍스트 응답용. 답변 텍스트와 usage_metadata를 반환한다."""

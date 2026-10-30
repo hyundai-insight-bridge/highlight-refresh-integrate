@@ -206,6 +206,9 @@ EMPTY_CELL = "-"  # 그 보고서에 없는 지표 칸
 REVIEW_MARK = "*"  # 차트에서 읽어 확인이 필요한 값(needs_review) 표시
 REVIEW_NOTE = f"{REVIEW_MARK} 차트에서 읽은 추정값이라 확인이 필요합니다."
 DIFF_HEADER = "차이(최대−최소)"  # 보고서 2개 이상을 비교할 때 표 맨 끝에 붙이는 열 이름
+ECOS_TITLE = "### ECOS 참고 (한국은행)"  # 표 아래에 붙이는 ECOS 섹션 제목
+ECOS_NOTE = "ECOS 값은 한국은행 통계라서 보고서 수치와 기준(계절조정·전기비 등)이 다를 수 있습니다."
+MAX_ECOS_ROWS = 6  # ECOS 값은 최근 몇 줄까지 보여 줄지
 MAX_UNIT_GROUPS = 3  # 차트 하나에 그리는 단위 묶음 수 (단위가 같은 지표끼리 한 칸)
 MAX_BARS_PER_GROUP = 8  # 한 칸에 그리는 지표·시점 수 (너무 많으면 글자가 겹친다)
 LEGEND_TITLE_LENGTH = 20  # 범례에 쓰는 보고서 제목의 최대 글자 수
@@ -328,6 +331,43 @@ def build_compare_table(report_ids: list[int]) -> str:
 
 	table = _rows_to_markdown(header, body)
 	return f"{table}\n\n{REVIEW_NOTE}" if has_review else table
+
+def build_ecos_reference(report_ids: list[int]) -> str:
+	"""비교한 보고서의 지표 중 ECOS로 확인할 지표 1개를 골라, 보고서 값과 ECOS 값을 한 표(Markdown)로 만든다.
+
+	find_usable_data()가 고른 지표(query.indicator_name)와 이름이 같은 보고서 수치를 모아 ECOS 값 옆에 보여 준다.
+	ECOS로 확인할 통계가 없거나 값을 못 가져오면 빈 문자열을 돌려준다 (비교표는 그대로 보여 주면 된다).
+	ECOS 호출 실패(ExternalApiError)는 그대로 올라가므로 부르는 쪽에서 잡는다.
+	"""
+	from hri.api.ecos_client import fetch_indicators
+	from hri.api.ecos_finder import find_usable_data
+
+	report_ids = list(dict.fromkeys(report_ids))
+	by_report = {rid: extract_indicators(rid) for rid in report_ids}
+	all_items = [item for items in by_report.values() for item in items]
+	if not all_items:
+		return ""
+
+	query = find_usable_data(all_items)
+	if query is None:
+		return ""
+	ecos_values = fetch_indicators(query, query.indicator_name)
+	if not ecos_values:
+		return ""
+
+	name = query.indicator_name.strip()
+	titles = _report_titles(report_ids, with_file=True)
+	body = []
+	for rid in report_ids:
+		for item in by_report[rid]:
+			if item.name.strip() == name:
+				body.append([_escape_cell(titles[rid]), item.period, _format_cell(item), _escape_cell(item.unit) or EMPTY_CELL])
+	for item in ecos_values[-MAX_ECOS_ROWS:]:
+		body.append([f"ECOS {query.stat_code}", item.period, _format_value(item.value), _escape_cell(item.unit) or EMPTY_CELL])
+
+	table = _rows_to_markdown(["구분", "시점", "값", "단위"], body)
+	reason = f"비교한 지표: {name}" + (f" ({query.reason})" if query.reason else "")
+	return f"{ECOS_TITLE}\n\n{reason}\n\n{table}\n\n{ECOS_NOTE}"
 
 
 def _use_korean_font() -> str | None:

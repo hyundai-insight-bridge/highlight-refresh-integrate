@@ -61,6 +61,10 @@ def _report_titles() -> dict[int, str]:
         logger.exception("보고서 제목 조회 실패")
         return {}
 
+def _escape_tilde(text: str) -> str:
+    """Markdown에서 ~가 취소선으로 해석되지 않게 \\~로 바꾼다 (예: '2~3%')"""
+    return (text or "").replace("~", "\\~")
+
 def _page_label(start: int | None, end: int | None) -> str:
     """쪽 범위 문구.
     예) 'p.1-3', 'p.4', 쪽 정보가 없으면 ''"""
@@ -72,29 +76,29 @@ def _page_label(start: int | None, end: int | None) -> str:
 
 def _summary_markdown(title: str, summary, view: str = VIEW_THREE_LINES) -> str:
     """보고서 1건의 요약(ReportSummary) 중 고른 방식(3줄 요약 / 섹션별 요약)만 Markdown으로 바꾼다"""
-    lines = [f"### {title}"]
+    lines = [f"### {_escape_tilde(title)}"]
 
     if view == VIEW_SECTIONS:
         lines.append("**섹션별 요약**")
         for s in summary.sections:
             pages = _page_label(s.start_page, s.end_page)
-            heading = f"**{s.title}**" + (f"{pages}" if pages else "")
-            lines.append(f"- {heading}: {s.summary}")
+            heading = f"**{_escape_tilde(s.title)}**" + (f"{pages}" if pages else "")
+            lines.append(f"- {heading}: {_escape_tilde(s.summary)}")
     else:
         lines.append("**3줄 요약**")
-        lines += [f"{i}. {line}" for i, line in enumerate(summary.three_lines, 1)]
+        lines += [f"{i}. {_escape_tilde(line)}" for i, line in enumerate(summary.three_lines, 1)]
 
     return "\n".join(lines)
 
 def _merge_markdown(titles: list[str], merged, notes: list[str] | None = None) -> str:
     """병합 결과(MergedReport)를 공통 의견, 차이점, 종합 결론 Markdown으로 바꾼다."""
-    lines = ["### 병합 결과", f"**대상 보고서**: {', '.join(titles)}"]
+    lines = ["### 병합 결과", f"**대상 보고서**: {_escape_tilde(', '.join(titles))}"]
     lines += notes or []
     lines += ["", "**공통 의견**"]
-    lines += [f"- {item}" for item in merged.common] or ["- (공통 의견 없음)"]
+    lines += [f"- {_escape_tilde(item)}" for item in merged.common] or ["- (공통 의견 없음)"]
     lines += ["", "**차이점**"]
-    lines += [f"- {item}" for item in merged.differences] or ["- (뚜렷한 차이 없음)"]
-    lines += ["", "**종합 결론**", merged.conclusion]
+    lines += [f"- {_escape_tilde(item)}" for item in merged.differences] or ["- (뚜렷한 차이 없음)"]
+    lines += ["", "**종합 결론**", _escape_tilde(merged.conclusion)]
 
     return "\n".join(lines)
 
@@ -120,6 +124,15 @@ def build_summary_tab():
             with gr.Column():
                 merge_btn = gr.Button("병합하기 (2개 이상 선택)")
                 merge_result = gr.Markdown()
+        with gr.Row():
+            with gr.Column():
+                request = gr.Textbox(
+                    label="자연어 요청 (검증·ECOS 조회·병합 등 도구 자동 선택)",
+                    placeholder="예) 선택한 보고서 수치를 ECOS 통계로 검증해줘",
+                    lines=2,
+                )
+                request_btn = gr.Button("요청 실행")
+                request_result = gr.Markdown()
 
     summary_components.update(
         tab=tab,
@@ -129,6 +142,9 @@ def build_summary_tab():
         view_radio=view_radio,
         merge_btn=merge_btn,
         merge_result=merge_result,
+        request=request,
+        request_btn=request_btn,
+        request_result=request_result,
     )
     return tab
 
@@ -235,7 +251,7 @@ def on_request(request: str, report_ids: list[int]) -> str:
         return REQUEST_ERROR_MESSAGE
 
     answer, tool_names = result if isinstance(result, tuple) else (result, [])
-    answer = (answer or "").strip() or EMPTY_ANSWER_MESSAGE
+    answer = _escape_tilde((answer or "").strip()) or EMPTY_ANSWER_MESSAGE
 
     if not tool_names:
         return answer
