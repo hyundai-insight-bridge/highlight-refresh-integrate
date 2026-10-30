@@ -21,15 +21,12 @@
 	[load_text, extract_tables, process_charts] 세 갈래가 모두 끝나면 → split → summarize_tables → persist → END
 compile은 registry.get_ingest_graph()가 한 번만 한다.
 """
-
 import logging
 from collections import Counter
-
 from langchain_core.runnables import RunnableConfig, RunnableLambda
-
 from langgraph.graph import END, START, StateGraph
-
 from hri.domain.schemas import ChartImage, Chunk, IngestState, OcrToken, Report, Section, Table
+from hri.dao.report_dao import insert_chunks, insert_report, insert_sections, insert_tables, make_file_hash
 
 logger = logging.getLogger(__name__)
 
@@ -402,6 +399,7 @@ def persist_node(state: IngestState) -> dict:
 		page_count=_page_count(state),
 		file_path=state["file_path"],
 		uploaded_by=state["user_id"],
+		file_hash=make_file_hash(state["file_path"], state["user_id"]),
 	)
 
 	report_id = None
