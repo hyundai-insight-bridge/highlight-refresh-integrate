@@ -120,6 +120,15 @@ def build_summary_tab():
             with gr.Column():
                 merge_btn = gr.Button("병합하기 (2개 이상 선택)")
                 merge_result = gr.Markdown()
+        with gr.Row():
+            with gr.Column():
+                request = gr.Textbox(
+                    label="자연어 요청 (검증·ECOS 조회·병합 등 도구 자동 선택)",
+                    placeholder="예) 선택한 보고서 수치를 ECOS 통계로 검증해줘",
+                    lines=2,
+                )
+                request_btn = gr.Button("요청 실행")
+                request_result = gr.Markdown()
 
     summary_components.update(
         tab=tab,
@@ -129,6 +138,9 @@ def build_summary_tab():
         view_radio=view_radio,
         merge_btn=merge_btn,
         merge_result=merge_result,
+        request=request,
+        request_btn=request_btn,
+        request_result=request_result,
     )
     return tab
 
