@@ -27,7 +27,9 @@ def select_reports(keyword: str, user_id: str | None = None) -> list[Report]:
 		FROM reports r
 		LEFT JOIN chunks c ON c.report_id = r.report_id
 		WHERE (r.title LIKE %s OR r.publisher LIKE %s)
-		  AND (%s IS NULL OR r.uploaded_by = %s)
+		  AND (%s IS NULL
+       	OR r.uploaded_by = %s
+    	OR r.uploaded_by IN (SELECT user_id FROM users WHERE role = 'admin'))
 		GROUP BY r.report_id
 		ORDER BY r.published_date DESC, r.report_id DESC
 	"""
