@@ -136,6 +136,9 @@ def build_app():
 			# 로그인 탭
 			login_tab = build_login_tab()
 
+			# 관리자 탭 (관리자 로그인 때 선택이 되려면 숨겨진 탭들보다 앞에 있어야 해서 로그인 탭 바로 뒤에 둠)
+			admin_tab = build_admin_tab()			
+
 			# 보고서 탭
 			with gr.Tab("보고서", id="report", visible=False) as report_tab:
 				with gr.Tabs():
@@ -159,7 +162,6 @@ def build_app():
 			# 질의응답 탭 버튼 연결 (state가 필요해서 build_app에서 부름)
 			connect_chat_events(state)
 			history_tab = build_history_tab()
-			admin_tab = build_admin_tab()
 
 		# 로그인 버튼 누르면 로그인 → 다른 사람이 로그인했으면 이전 사용자의 화면 내용 비우기
 		login_components["login_btn"].click(

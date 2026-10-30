@@ -149,14 +149,19 @@ def build_admin_tab():
 
 	- 관리자 계정에만 보이도록 처음에는 숨겨 둔다 (visible=False, 관리자가 로그인하면 on_login이 보이게 함)
 	- 새로고침 버튼은 state가 필요 없어서 여기서 바로 on_refresh()와 연결한다
-	- 차트(gr.Image)와 차트 안내 문구는 처음에는 둘 다 보이지 않는다
-	  새로고침하면 차트가 있으면 차트를, 없으면 '일별 질문 수: 표시할 데이터가 없습니다.'를 보여 준다
+	- 새로고침 버튼은 화면 오른쪽 위에 둔다
+	- 관리자 탭이 선택되면(관리자가 로그인하면 on_login이 이 탭을 선택함) 새로고침을 누르지 않아도 on_refresh()로 바로 채운다
+	- 차트(gr.Image)와 차트 안내 문구는 로그인 전에는 보이지 않는다 (관리자 탭이 선택되어 갱신되면 차트가 있을 때는 차트를, 없을 때는 '일별 질문 수: 표시할 데이터가 없습니다.'를 보여 줌)
+	새로고침하면 차트가 있으면 차트를, 없으면 '일별 질문 수: 표시할 데이터가 없습니다.'를 보여 준다
 
 	입력: 없음
 	출력: gr.Tab (관리자 탭)
 	"""
 	with gr.Tab("관리자", id="admin", visible=False) as admin_tab:
-		refresh_btn = gr.Button("새로고침", variant="primary")
+		# 오른쪽 위 새로고침 버튼 (제목은 왼쪽, 버튼은 오른쪽 끝)
+		with gr.Row(equal_height=True):
+			gr.Markdown("## 관리자 대시보드")
+			refresh_btn = gr.Button("새로고침", variant="primary", scale=0, min_width=120)
 
 		# 사용 현황
 		gr.Markdown("### 사용 현황")
@@ -184,17 +189,20 @@ def build_admin_tab():
 		gr.Markdown("### 운영 상태")
 		recent_errors = gr.Markdown()
 
-	# 새로고침 버튼 누르면 대시보드 갱신 (on_refresh()가 돌려주는 순서와 같게, 화면 위에서 아래 순서)
-	refresh_btn.click(
-		fn=on_refresh,
-		outputs=[
-			top_questions, daily_chart, daily_chart_message, persona_ratio,
-			source_ratio, feedback_ratio, no_source_questions,
-			perf_cost, usage_by_flow,
-			reports,
-			recent_errors
-		]
-	)
+	# on_refresh()가 돌려주는 순서와 같게, 화면 위에서 아래 순서
+	outputs = [
+		top_questions, daily_chart, daily_chart_message, persona_ratio,
+		source_ratio, feedback_ratio, no_source_questions,
+		perf_cost, usage_by_flow,
+		reports,
+		recent_errors
+	]
+
+	# 새로고침 버튼 누르면 대시보드 갱신
+	refresh_btn.click(fn=on_refresh, outputs=outputs)
+
+	# 관리자 탭이 선택되면(로그인하면 자동 선택됨) 버튼을 누르지 않아도 바로 갱신
+	admin_tab.select(fn=on_refresh, outputs=outputs)
 
 	return admin_tab
 
