@@ -64,7 +64,7 @@ def _use(monkeypatch, cursor):
 
 
 def _indicator(**kwargs) -> Indicator:
-	base = dict(name="경제성장률", value=2.1, unit="%", period="2027", source="text", needs_review=False)
+	base = dict(name="경제성장률", value=2.1, unit="%", period="2027", page=None, source="text", needs_review=False)
 	base.update(kwargs)
 	return Indicator(**base)
 
@@ -72,7 +72,7 @@ def _indicator(**kwargs) -> Indicator:
 def test_select_converts_rows(monkeypatch):
 	row = {
 		"report_id": 7, "name": "경제성장률", "value": 2.1, "unit": "%",
-		"period": "2027", "source": "chart", "needs_review": 1,
+		"period": "2027", "page": 12, "source": "chart", "needs_review": 1,
 	}
 	cursor = _FakeCursor(rows=[row])
 	_use(monkeypatch, cursor)
@@ -82,6 +82,8 @@ def test_select_converts_rows(monkeypatch):
 	assert result[0].name == "경제성장률"
 	assert result[0].source == "chart"
 	assert result[0].needs_review is True
+	assert result[0].page == 12
+
 
 
 def test_select_empty(monkeypatch):
@@ -92,11 +94,11 @@ def test_select_empty(monkeypatch):
 def test_insert_uses_given_report_id_and_commits(monkeypatch):
 	cursor = _FakeCursor()
 	conn = _use(monkeypatch, cursor)
-	items = [_indicator(), _indicator(name="물가상승률", value=2.3, needs_review=True)]
+	items = [_indicator(), _indicator(name="물가상승률", value=2.3, needs_review=True, page=12)]
 	assert indicator_dao.insert_indicators(5, items) == 2
 	_, rows = cursor.many
-	assert rows[0] == (5, "경제성장률", 2.1, "%", "2027", "text", 0)
-	assert rows[1] == (5, "물가상승률", 2.3, "%", "2027", "text", 1)
+	assert rows[0] == (5, "경제성장률", 2.1, "%", "2027", None, "text", 0)
+	assert rows[1] == (5, "물가상승률", 2.3, "%", "2027", 12, "text", 1)
 	assert conn.committed is True
 
 
@@ -114,3 +116,18 @@ def test_insert_rolls_back_on_error(monkeypatch):
 		indicator_dao.insert_indicators(5, [_indicator()])
 	assert conn.rolled_back is True
 	assert conn.committed is False
+
+
+def test_select_row_without_page_gives_none(monkeypatch):
+	row = {"report_id": 7, "name": "경제성장률", "value": 2.1, "unit": "%", "period": "2027", "page": None, "source": "text", "needs_review": 0}
+	_use(monkeypatch, _FakeCursor(rows=[row]))
+	assert indicator_dao.select_indicators(7)[0].page is None
+
+
+def test_sql_uses_page_column(monkeypatch):
+	cursor = _FakeCursor()
+	_use(monkeypatch, cursor)
+	indicator_dao.select_indicators(7)
+	assert "page" in cursor.executed[0]
+	indicator_dao.insert_indicators(5, [_indicator()])
+	assert "page" in cursor.many[0]

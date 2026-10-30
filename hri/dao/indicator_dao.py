@@ -14,7 +14,7 @@ def select_indicators(report_id: int) -> list[Indicator]:
 	저장된 지표가 없으면 빈 리스트를 돌려준다. needs_review는 DB의 0/1을 bool로 바꾼다.
 	"""
 	sql = """
-		SELECT report_id, name, value, unit, period, source, needs_review
+		SELECT report_id, name, value, unit, period, page, source, needs_review
 		FROM indicators
 		WHERE report_id = %s
 		ORDER BY indicator_id
@@ -38,12 +38,12 @@ def insert_indicators(report_id: int, indicators: list[Indicator]) -> int:
 		return 0
 
 	sql = """
-		INSERT INTO indicators (report_id, name, value, unit, period, source, needs_review)
-		VALUES (%s, %s, %s, %s, %s, %s, %s)
+		INSERT INTO indicators (report_id, name, value, unit, period, page, source, needs_review)
+		VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
 	"""
-	# 지표마다 (report_id, name, ...) 순서의 튜플로 바꾼다. needs_review는 DB의 BOOLEAN에 맞춰 0/1
+	# 지표마다 (report_id, name, ..., page, ...) 순서의 튜플로 바꾼다. page는 모르면 None(NULL). needs_review는 DB의 BOOLEAN에 맞춰 0/1
 	rows = [
-		(report_id, i.name, i.value, i.unit, i.period, i.source, int(bool(i.needs_review)))
+		(report_id, i.name, i.value, i.unit, i.period, i.page, i.source, int(bool(i.needs_review)))
 		for i in indicators
 	]
 

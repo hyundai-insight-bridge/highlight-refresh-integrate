@@ -300,8 +300,12 @@ def extract_report_meta(file_path: str, pages: list[Page]) -> dict:
 	first_text = pages[0].text if pages else ""
 	lines = _split_lines(first_text)
 
-	title = _meta_title(file_path) or _cover_title(lines) or Path(file_path).stem
-	publisher = HRI_PUBLISHER if any(HRI_ISSUE_LINE.search(line) for line in lines) else None
+	is_hri = any(HRI_ISSUE_LINE.search(line) for line in lines)    # HRI 발간번호 줄이 있으면 HRI 표지
+	if is_hri:
+		title = _cover_title(lines) or Path(file_path).stem         # HRI: 표지 제목 (37편 검증된 방식)
+	else:
+		title = _meta_title(file_path) or Path(file_path).stem      # 그 밖: 메타데이터 제목, 없으면 파일 이름
+	publisher = HRI_PUBLISHER if is_hri else None                   # 같은 판정을 재사용
 
 	return {
 		"title": title[:TITLE_MAX_CHARS],
