@@ -14,7 +14,7 @@ THREE_LINES_MAX_TOKENS = 3000
 LINE_MAX_CHARS = 60 # ThreeLineSummary.lines 설명의 "각 줄 60자 이내"와 같은 값
 MIN_MERGE_REPORTS = 2 # 병합하려면 필요한 보고서 수
 MAX_MERGE_CHARS = 4000 # 보고서 1건의 섹션 요약을 LLM에 보내는 최대 글자 수
-MERGE_MAX_TOKENS = 4000
+MERGE_MAX_TOKENS = 6000
 VERIFY_MAX_TOKENS = 4000
 MAX_REPORT_ROWS = 30 # LLM에 보내는 보고서 수치 줄 수
 MAX_ECOS_ROWS = 20 # LLM에 보내는 ECOS 값 줄 수
@@ -141,8 +141,17 @@ def _report_titles(report_ids: list[int]) -> dict[int, str]:
     return {report_id: found.get(report_id, f"보고서 {report_id}") for report_id in report_ids}
 
 def _merge_body(summary) -> str:
-    """보고서 1건의 섹션 요약을 '[섹션 제목] 요약' 줄로 이어 붙이고 MAX_MERGE_CHARS자까지만 남긴다."""
-    return "\n".join(f"[{s.title}] {s.summary}" for s in summary.sections)[:MAX_MERGE_CHARS]
+    """보고서 1건의 섹션 요약을 '[섹션 제목] 요약' 줄로 이어 붙인다.
+    전체가 MAX_MERGE_CHARS자를 넘으면 섹션마다 같은 글자 수로 줄여서, 뒤쪽 섹션이 통째로 빠지지 않게 한다.
+    """
+    lines = [f"[{s.title}] {s.summary}" for s in summary.sections]
+    if not lines:
+        return ""
+    if sum(len(line) + 1 for line in lines) <= MAX_MERGE_CHARS:
+        return "\n".join(lines)
+    per_line = max(MAX_MERGE_CHARS // len(lines) - 1, 50)
+
+    return "\n".join(line[:per_line] for line in lines)[:MAX_MERGE_CHARS]
 
 def merge_reports(report_ids: list[int]) -> MergedReport:
     """여러 보고서를 공통 의견·차이점·종합 결론으로 병합한다.
@@ -161,7 +170,11 @@ def merge_reports(report_ids: list[int]) -> MergedReport:
     from hri.service.summary_service import summarize_report
 
     titles = _report_titles(ids)
-    parts = [f"### {titles[report_id]}\n{_merge_body(summarize_report(report_id))}" for report_id in ids]
+    counts = {}
+    for title in titles.values():
+        counts[title] = counts.get(title, 0) + 1
+    labels = {report_id: title if counts[title] == 1 else f"{title} (보고서 {report_id})" for report_id, title in titles.items()}
+    parts = [f"### {labels[report_id]}\n{_merge_body(summarize_report(report_id))}" for report_id in ids]
     messages = [
         ("system", MERGE_SYSTEM_PROMPT),
         ("human", "\n\n".join(parts)),
