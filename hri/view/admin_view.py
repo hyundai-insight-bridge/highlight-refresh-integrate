@@ -167,7 +167,7 @@ def build_admin_tab():
 		# 사용 현황
 		gr.Markdown("### 사용 현황")
 		top_questions = gr.Markdown()
-		daily_chart = gr.Image(label="일별 질문 수", interactive=False, visible=False)
+		daily_chart = gr.Image(label="일별 질문 수·평균 응답 시간", interactive=False, visible=False)
 		daily_chart_message = gr.Markdown()
 		persona_ratio = gr.Markdown()
 		route_ratio = gr.Markdown()
@@ -263,14 +263,14 @@ def plot_daily_counts(rows: list[dict]) -> str:
 	"""
 	일별 추이 차트 그리기
 
-	matplotlib 선 그래프로 일별 질문 수와 평균 응답 시간을 그려 PNG로 저장한다.
+	matplotlib 선 그래프로 일별 질문 수와 평균 응답 시간을 위아래 두 그래프로 나눠 그려 PNG 한 장으로 저장한다.
 
 	순서
 	1. rows를 날짜(가로축)·질문 수·평균 응답 시간 리스트로 나눈다
 	   (평균 응답 시간이 None인 날은 float("nan")으로 바꿔 그 날만 선을 끊어서 그린다)
 	2. 한글 글꼴을 정한다 (장유빈 님 _use_korean_font() 재사용, 못 찾으면 기본 글꼴)
-	3. 왼쪽 세로축에 질문 수(건), 오른쪽 세로축(twinx)에 평균 응답 시간(ms)을 선으로 그린다
-	   (단위가 달라서 세로축을 2개로 나눔, 범례는 선과 겹치지 않게 그래프 바깥 위쪽에 둠)
+	3. 위 그래프에 질문 수(건), 아래 그래프에 평균 응답 시간(ms)을 선으로 그린다
+	   (한 그래프에 두 선을 그리면 날짜가 적을 때 선이 겹쳐 보여서 나눔, 가로축 날짜는 두 그래프가 함께 씀)
 	4. data/plots/에 daily_uuid.png로 저장하고 그림을 닫는다 (지표 비교 차트와 같은 폴더)
 
 	- 화면 없는 서버에서도 그릴 수 있게 matplotlib.use("Agg")를 쓴다
@@ -302,19 +302,18 @@ def plot_daily_counts(rows: list[dict]) -> str:
 		plt.rcParams["font.family"] = font
 	plt.rcParams["axes.unicode_minus"] = False
 
-	# 3) 선 그래프 그리기 (왼쪽 축: 질문 수, 오른쪽 축: 평균 응답 시간)
-	fig, ax1 = plt.subplots(figsize=(8, 4), layout="constrained")
-	ax1.plot(days, counts, marker="o", color="C0", label="질문 수")
-	ax1.set_xlabel("날짜")
+	# 3) 선 그래프 그리기 (위: 질문 수, 아래: 평균 응답 시간, 가로축 날짜는 함께 씀)
+	fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 6), sharex=True, layout="constrained")
+
+	ax1.plot(days, counts, marker="o", color="C0")
+	ax1.set_title("일별 질문 수")
 	ax1.set_ylabel("질문 수 (건)")
-	ax1.tick_params(axis="x", rotation=45)
 
-	ax2 = ax1.twinx()
-	ax2.plot(days, avg_ms, marker="s", color="C1", label="평균 응답 시간")
+	ax2.plot(days, avg_ms, marker="s", color="C1")
+	ax2.set_title("일별 평균 응답 시간")
 	ax2.set_ylabel("평균 응답 시간 (ms)")
-
-	fig.suptitle("일별 질문 수·평균 응답 시간")
-	fig.legend(loc="outside upper right", ncol=2)
+	ax2.set_xlabel("날짜")
+	ax2.tick_params(axis="x", rotation=45)
 
 	# 4) PNG로 저장하고 그림 닫기
 	PLOT_DIR.mkdir(parents=True, exist_ok=True)
