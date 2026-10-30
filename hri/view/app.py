@@ -139,7 +139,8 @@ def build_app():
 
 		# 제목, 로그아웃 버튼 (로그아웃 버튼은 처음에 숨김)
 		with gr.Row():
-			gr.Markdown("## 📊 HRI Insight Bridge - 경제분석보고서 AI 요약·질의응답")
+			# 제목은 gr.HTML로 둔다 (gr.Markdown은 칸에 스크롤이 생겨서 Windows에서 위아래 화살표가 보임)
+			gr.HTML("<h2>📊 HRI Insight Bridge - 경제분석보고서 AI 요약·질의응답</h2>")
 			logout_btn = gr.Button("로그아웃", size="sm", scale=0, visible=False)
 
 		with gr.Tabs(selected="login") as tabs:

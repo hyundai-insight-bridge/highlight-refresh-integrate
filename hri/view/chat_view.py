@@ -168,7 +168,7 @@ def build_chat_tab():
 					send_btn = gr.Button("전송", variant="primary", scale=0, min_width=90)
 		# 오른쪽: 스튜디오 (용어 카드). gr.Sidebar라서 화면 오른쪽 끝의 버튼으로 펼치고 접는다 (처음에는 접힘)
 		with gr.Sidebar(label="용어 검색", position="right", open=False) as studio:
-			gr.Markdown("#### 스튜디오")
+			gr.Markdown("#### 용어검색")
 			with gr.Accordion("용어 카드", open=True) as term_menu:
 				# 용어 검색 창 (류현수). 페르소나를 같이 써서 질문 답변과 같은 난이도로 설명한다
 				build_term_panel(persona)
