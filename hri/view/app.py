@@ -15,9 +15,8 @@ from hri.view.report_view import build_upload_tab, build_report_list_panel, on_v
 from hri.view.summary_view import build_summary_tab, on_summarize, on_request, summary_components, on_merge
 from hri.view.chat_view import build_chat_tab, chat_components, connect_chat_events, refresh_report_choices, CHAT_TITLE_STYLE
 from hri.view.indicator_view import on_compare
-from hri.view.history_view import build_history_tab, history_components, on_load_history, on_restore, on_prev_page, on_next_page, HISTORY_TABLE_STYLE
+from hri.view.history_view import history_components, on_load_history, on_restore, on_prev_page, on_next_page, HISTORY_TABLE_STYLE
 from hri.view.admin_view import build_admin_tab, admin_components, on_refresh, on_admin_upload, ADMIN_SCROLLBAR_STYLE
-
 
 # 화면 전체 테마 (UI 레퍼런스: 옅은 회색 배경·파란 강조색·둥근 모서리, CSS 없이 Gradio 테마 옵션만 사용)
 APP_THEME = gr.themes.Soft(
@@ -79,9 +78,9 @@ def clear_other_user_screen(state, screen_owner):
 	순서
 	1. 로그인에 실패했으면(state의 user가 None) 아무것도 바꾸지 않는다
 	2. 화면 주인이 없거나(처음 로그인) 같은 사람이면 화면을 그대로 두고 주인만 기록한다
-	3. 다른 사람이면 질의응답·요약·내 기록·업로드·지표 비교 화면 내용을 비운다
+	3. 다른 사람이면 질의응답·요약·과거 대화 기록·업로드·지표 비교 화면 내용을 비운다
 
-	- 질문 기록 자체는 DB(qa_logs)에 남아 있어서, 다시 로그인하면 내 기록 탭에서 언제든 볼 수 있다
+	- 질문 기록 자체는 DB(qa_logs)에 남아 있어서, 다시 로그인하면 질의응답 탭의 과거 대화 기록에서 언제든 볼 수 있다
 	- 돌려주는 값 17개는 build_app()의 outputs 순서와 같아야 한다
 	  [화면 주인, 대화창, 질문 입력칸, 출처, 👍, 👎, 질의응답 보고서 선택,
 	   요약 보고서 선택, 요약 결과, 요청, 요청 결과,
@@ -116,12 +115,22 @@ def clear_other_user_screen(state, screen_owner):
 		"",  # 병합 결과
 		"",  # 요청
 		"",  # 요청 결과
-		"",  # 기록 표 (내 기록 탭을 열면 다시 채워짐)
+		"",  # 기록 표 (과거 대화 기록 버튼을 누르면 다시 채워짐)
 		gr.update(choices=[], value=None),  # 대화 선택
 		"",  # 업로드 결과
 		"",  # 비교표
 		None  # 비교 차트
 	]
+
+
+def show_history():
+	"""과거 대화 기록 버튼: 채팅 칸을 숨기고 그 자리에 과거 대화 기록 칸을 보인다. 출력: (채팅 칸, 기록 칸)"""
+	return gr.update(visible=False), gr.update(visible=True)
+
+
+def show_chat():
+	"""채팅으로 돌아가기·대화 이어가기: 기록 칸을 숨기고 채팅 칸을 다시 보인다. 출력: (채팅 칸, 기록 칸)"""
+	return gr.update(visible=True), gr.update(visible=False)
 
 
 def build_app():
@@ -134,7 +143,7 @@ def build_app():
 		- 보고서 목록·검색: build_report_list_panel()
 		- 지표 비교표: 비교할 보고서 드롭다운 + 비교 버튼 + 비교표 + 차트
 		- 업로드: build_upload_tab()
-	- 요약·분석, 질의응답, 내 기록, 관리자 탭: 각 담당자의 build_*_tab()
+	- 요약·분석, 질의응답(안에 과거 대화 기록), 관리자 탭: 각 담당자의 build_*_tab()
 	  (로그인 전에는 숨김, 관리자 탭은 관리자만 보임)
 
 	버튼 연결
@@ -147,7 +156,8 @@ def build_app():
 	- 요약하기 버튼 → on_summarize (선택한 보고서 요약 보여주기)
 	- 요청 실행 버튼 → on_request (자연어 요청 결과·실행한 도구 보여주기)
 	  (업로드·요약 버튼은 다른 탭의 드롭다운이나 state가 필요해서 모든 탭을 만든 뒤 여기서 연결한다)
-	- 내 기록 탭을 열면 → on_load_history (대화별 기록 표·대화 선택 목록 채우기)
+	- 질의응답 탭의 과거 대화 기록 버튼 → show_history · on_load_history (채팅 칸 대신 기록 칸, 대화별 기록 표·대화 선택 목록 채우기)
+	- 채팅으로 돌아가기 · 대화 이어가기 버튼 → show_chat (기록 칸을 닫고 채팅 칸 보이기)
 	- 로그인 뒤 → clear_other_user_screen (다른 사람이 로그인했으면 이전 사용자의 화면 내용 비우기)
 
 	입력: 없음
@@ -187,10 +197,9 @@ def build_app():
 					# 보고서 업로드
 					build_upload_tab()
 
-			# 요약·분석, 질의응답, 내 기록, 관리자 탭
+			# 요약·분석, 질의응답 탭 (과거 대화 기록은 질의응답 탭 안에 있음)
 			summary_tab = build_summary_tab()
 			chat_tab = build_chat_tab()
-			history_tab = build_history_tab()
 		# 질의응답 탭 버튼 연결 (state가 필요해서 build_app에서 부름)
 		connect_chat_events(state)
 
@@ -198,7 +207,7 @@ def build_app():
 		login_components["login_btn"].click(
 			fn=on_login,
 			inputs=[login_components["user_id"], login_components["password"]],
-			outputs=[state, login_tab, report_tab, summary_tab, chat_tab, history_tab, admin_tab, logout_btn, tabs, compare_reports, login_components["message"]]
+			outputs=[state, login_tab, report_tab, summary_tab, chat_tab, admin_tab, logout_btn, tabs, compare_reports, login_components["message"]]
 		).then(
 			fn=clear_other_user_screen,
 			inputs=[state, screen_owner],
@@ -211,13 +220,17 @@ def build_app():
 				upload_components["result"],
 				compare_table, compare_chart
 			]
+		).then(
+			# 로그인하면 질의응답 탭은 항상 채팅 칸부터 보이게 (이전 사용자가 열어 둔 과거 대화 기록 칸 닫기)
+			fn=show_chat,
+			outputs=[chat_components["chat_col"], history_components["column"]]
 		)
 
 		# 로그아웃 버튼 누르면 로그아웃
 		logout_btn.click(
 			fn=on_logout,
 			inputs=state,
-			outputs=[state, login_tab, report_tab, summary_tab, chat_tab, history_tab, admin_tab, logout_btn, tabs, compare_reports]
+			outputs=[state, login_tab, report_tab, summary_tab, chat_tab, admin_tab, logout_btn, tabs, compare_reports]
 		)
 
 		# 보고서 탭을 열면 보고서 목록 불러오기 (목록 메뉴가 처음부터 펼쳐져 있어서 펼칠 때 대신 여기서 불러옴)
@@ -241,14 +254,23 @@ def build_app():
 			outputs=[tabs, summary_components["report_dropdown"]]
 		)
 
-		# 내 기록 탭을 열면 기록 표·대화 선택 목록 채우기
-		history_tab.select(
+		# 질의응답 탭 '과거 대화 기록' 버튼 누르면 채팅 칸 대신 기록 칸을 보이고 기록 표·대화 선택 목록 채우기
+		chat_components["history_btn"].click(
+			fn=show_history,
+			outputs=[chat_components["chat_col"], history_components["column"]]
+		).then(
 			fn=on_load_history,
 			inputs=state,
 			outputs=[history_components["table"], history_components["session_dropdown"], history_components["page_state"]]
 		)
 
-		# 내 기록 표 이전·다음 페이지 버튼
+		# 채팅으로 돌아가기 버튼 누르면 기록 칸을 닫고 채팅 칸 보이기
+		history_components["back_btn"].click(
+			fn=show_chat,
+			outputs=[chat_components["chat_col"], history_components["column"]]
+		)
+
+		# 과거 대화 기록 표 이전·다음 페이지 버튼
 		history_components["prev_btn"].click(
 			fn=on_prev_page,
 			inputs=[state, history_components["page_state"]],
@@ -260,12 +282,15 @@ def build_app():
 			outputs=[history_components["table"], history_components["page_state"]]
 		)
 
-		# 대화 이어가기 버튼 누르면 질의응답 탭 Chatbot에 이전 대화 채우기
+		# 대화 이어가기 버튼 누르면 Chatbot에 이전 대화를 채우고 채팅 칸으로 돌아가기
 		history_components["restore_btn"].click(
 			fn=on_restore,
 			inputs=[history_components["session_dropdown"], state],
 			outputs=[chat_components["chatbot"], state]
-		)		
+		).then(
+			fn=show_chat,
+			outputs=[chat_components["chat_col"], history_components["column"]]
+		)
 
 		# 질의응답으로 이동 버튼 누르면 질의응답 탭으로
 		go_chat_btn.click(
