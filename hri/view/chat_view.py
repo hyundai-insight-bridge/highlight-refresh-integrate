@@ -220,12 +220,12 @@ def build_chat_tab():
 	추천 질문 버튼은 처음에 시작 질문 3개를 보여 주고(build_suggest_buttons, 류현수), 답변이 끝난 뒤
 	respond_stream()이 후속 질문으로 바꾼다. 버튼을 누르면 질문 입력칸에 그 질문이 들어간다(on_suggest_click).
 	👍/👎 버튼은 숨겨 두고, 기록이 남은 답변이 끝나면 보인다 (connect_feedback_events·on_feedback, 류현수).
-	탭은 로그인 전에는 숨겨 둔 채(visible=False) 만들고, 로그인하면 on_login이 보이게 한다.
+	탭은 사용자 탭 줄(gr.Tabs) 안에 보이게 만들고, 로그인 전에는 build_app()이 탭 줄을 통째로 숨긴다.
 	이벤트 연결은 gr.State가 필요해서 build_app()이 connect_chat_events(state)로 한다.
 
 	반환: gr.Tab (컴포넌트는 chat_components로 꺼내 쓴다)
 	"""
-	with gr.Tab("질의응답", id=CHAT_TAB_ID, visible=False) as tab:
+	with gr.Tab("질의응답", id=CHAT_TAB_ID) as tab:
 		with gr.Row(equal_height=False):
 			# 왼쪽: 소스 (보고서 선택·페르소나·검색 옵션, 답변 뒤에는 출처)
 			# 소스 내용은 위쪽에서 남는 높이를 쓰며 넘치면 그 안에서 스크롤, '과거 대화 기록' 버튼은 칸 맨 아래에 붙는다

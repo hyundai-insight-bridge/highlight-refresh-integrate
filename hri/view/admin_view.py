@@ -507,7 +507,7 @@ def build_admin_tab():
 	- 문서 관리: 보고서 목록 표
 	- 운영 상태: 최근 에러 로그 표 (ERROR_PAGE_SIZE개씩, 표 밑 이전·다음 버튼으로 페이지 넘김)
 
-	- 관리자 계정에만 보이도록 처음에는 숨겨 둔다 (visible=False, 관리자가 로그인하면 on_login이 보이게 함)
+	- 관리자 탭 줄(gr.Tabs) 안에 보이게 만들고, 관리자 계정에만 보이도록 build_app()이 탭 줄을 통째로 숨겨 둔다 (관리자가 로그인하면 on_login이 보이게 함)
 	- 새로고침 버튼은 state가 필요 없어서 여기서 바로 on_refresh()와 연결한다
 	- 새로고침 버튼은 화면 오른쪽 위에 둔다
 	- 화면 배치: 머리글(제목·새로고침) 아래에 탭(gr.Tabs) 3개를 두어 한 화면에 한 탭씩 보여 준다
@@ -521,13 +521,13 @@ def build_admin_tab():
 	- 표는 gr.Dataframe으로 보여 준다 (옅은 선·머리글 배경은 Dataframe 기본 모양, 모양은 _admin_table()에서 한 번에 정함)
 	- 최근 에러 로그 표는 column_widths로 시각·사용자 칸을 좁게 고정해 줄바꿈되지 않게 하고, 에러 칸을 넓힌다
 	- 자료 유무 응답 비율·평균 응답 시간·원화 비용은 테두리 칸(gr.Markdown(container=True))으로 강조해 보여 준다
-	- 관리자 탭이 선택되면(관리자가 로그인하면 on_login이 이 탭을 선택함) 새로고침을 누르지 않아도 on_refresh()로 바로 채운다
-	- 차트(gr.Image)와 차트 안내 문구는 로그인 전에는 보이지 않는다 (관리자 탭이 선택되어 갱신되면 차트가 있을 때는 차트를, 없을 때는 '일별 질문 수: 표시할 데이터가 없습니다.'를 보여 줌)
+	- 관리자가 로그인하면 새로고침을 누르지 않아도 build_app()이 on_refresh()로 바로 채운다
+	- 차트(gr.Image)와 차트 안내 문구는 로그인 전에는 보이지 않는다 (관리자 로그인으로 갱신되면 차트가 있을 때는 차트를, 없을 때는 '일별 질문 수: 표시할 데이터가 없습니다.'를 보여 줌)
 
 	입력: 없음
 	출력: gr.Tab (관리자 탭)
 	"""
-	with gr.Tab("관리자", id="admin", visible=False, elem_id="admin-tab") as admin_tab:
+	with gr.Tab("관리자", id="admin", elem_id="admin-tab") as admin_tab:
 		# 머리글: 제목·설명은 왼쪽, 새로고침 버튼은 오른쪽 끝 (버튼은 늘어나지 않게 scale=0, 너비 120)
 		with gr.Row(equal_height=True):
 			gr.Markdown("## 관리자 대시보드")
@@ -633,9 +633,6 @@ def build_admin_tab():
 
 	# 새로고침 버튼 누르면 대시보드 갱신
 	refresh_btn.click(fn=on_refresh, outputs=outputs)
-
-	# 관리자 탭이 선택되면(로그인하면 자동 선택됨) 버튼을 누르지 않아도 바로 갱신
-	admin_tab.select(fn=on_refresh, outputs=outputs)
 
 	# 업로드 버튼은 state·다른 탭 드롭다운이 필요해서 app.py에서 on_admin_upload()와 연결한다 (결과는 파일별 페이지로)
 	admin_components.update(
