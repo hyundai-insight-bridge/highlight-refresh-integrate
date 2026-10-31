@@ -138,8 +138,8 @@ check("3 on_upload 출력: [결과, 요약 탭 드롭다운, 질의응답 탭 �
 name, inputs, outputs = find_event(s["tab"], "select")
 check("4 요약·분석 탭 열기 → refresh_report_choices 연결 (드롭다운 채우기)", name == "refresh_report_choices" and outputs == [s["report_dropdown"]._id], name)
 
-name, inputs, outputs = find_event(s["summarize_btn"], "click")
-check("5 요약하기 버튼 → on_summarize 연결", name == "on_summarize" and inputs == [s["report_dropdown"]._id] and outputs == [s["summary_result"]._id], name)
+name, inputs, outputs = find_event(s["three_lines_btn"], "click")
+check("5 3줄 요약하기 버튼 → on_summarize_three_lines 연결", name == "on_summarize_three_lines" and inputs == [s["report_dropdown"]._id] and outputs == [block._id for block in s["page_outputs"]], name)
 
 name, inputs, outputs = find_event(s["request_btn"], "click")
 check("6 요청 실행 버튼 → on_request 연결", name == "on_request" and inputs == [s["request"]._id, s["report_dropdown"]._id] and outputs == [s["request_result"]._id], name)
