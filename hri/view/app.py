@@ -16,8 +16,7 @@ from hri.view.summary_view import build_summary_tab, on_summarize, on_request, s
 from hri.view.chat_view import build_chat_tab, chat_components, connect_chat_events, refresh_report_choices, CHAT_TITLE_STYLE
 from hri.view.indicator_view import on_compare
 from hri.view.history_view import history_components, on_load_history, on_restore, on_prev_page, on_next_page, HISTORY_TABLE_STYLE
-from hri.view.admin_view import build_admin_tab, admin_components, on_refresh
-
+from hri.view.admin_view import build_admin_tab, admin_components, on_refresh, on_admin_upload, ADMIN_SCROLLBAR_STYLE
 
 # 화면 전체 테마 (UI 레퍼런스: 옅은 회색 배경·파란 강조색·둥근 모서리, CSS 없이 Gradio 테마 옵션만 사용)
 APP_THEME = gr.themes.Soft(
@@ -314,11 +313,16 @@ def build_app():
 			outputs=[upload_components["result"], summary_components["report_dropdown"], chat_components["report_dropdown"]]
 		)
 
-		# 관리자 탭 업로드 버튼: 진행 상황·결과를 보여 주고, 끝나면 대시보드(보고서 목록 등) 갱신
+		# 관리자 탭 업로드 버튼: 진행 상황·결과를 파일 하나씩 페이지로 보여 주고(파일이 끝날 때마다 보고서 목록 갱신), 끝나면 대시보드 갱신
 		admin_components["upload_btn"].click(
-			fn=on_upload,
+			fn=on_admin_upload,
 			inputs=[admin_components["file"], state],
-			outputs=[admin_components["result"], summary_components["report_dropdown"], chat_components["report_dropdown"]]
+			outputs=[
+				admin_components["result"], admin_components["page_info"], admin_components["page_state"], admin_components["page_buttons"], admin_components["reports"],
+				summary_components["report_dropdown"], chat_components["report_dropdown"]
+			],
+			# 업로드 중 파란 진행 표시는 결과 칸에만 (페이지 문구 위에도 생기면 선이 2개라 헷갈림)
+			show_progress_on=admin_components["result"]
 		).then(
 			fn=on_refresh,
 			outputs=admin_components["outputs"]
@@ -380,4 +384,4 @@ def main():
 	# 화면 띄우기
 	demo = build_app()
 	# 스타일은 head로 한 번에 넣는다 (화면 안에 빈 HTML 칸을 만들면 위쪽 여백이 생겨서)
-	demo.launch(server_port=7860, theme=APP_THEME, footer_links=[], head=LOGIN_BOX_STYLE + HISTORY_TABLE_STYLE + LOGOUT_STYLE + CHAT_TITLE_STYLE)
+	demo.launch(server_port=7860, theme=APP_THEME, footer_links=[], head=LOGIN_BOX_STYLE + HISTORY_TABLE_STYLE + LOGOUT_STYLE + CHAT_TITLE_STYLE + ADMIN_SCROLLBAR_STYLE)

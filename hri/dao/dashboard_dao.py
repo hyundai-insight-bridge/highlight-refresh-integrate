@@ -22,6 +22,8 @@ def select_top_questions() -> list[dict]:
 
 	qa_logs를 question으로 GROUP BY 하여 COUNT 내림차순 상위 10건을 가져온다.
 	(같은 질문을 몇 번 했는지 세서 많이 나온 순서로 10개)
+	- 횟수가 같으면 가장 최근에 물어본 날짜(MAX(created_at))가 늦은 질문이 먼저 온다
+	  (10위 경계에서 같은 횟수인 질문이 여럿이어도 매번 같은 질문이 보이도록 순서를 고정)
 
 	입력: 없음
 	출력: list[dict] (예: [{'question': '기준금리 전망은?', 'count': 5}, ...], 기록이 없으면 [])
@@ -30,7 +32,7 @@ def select_top_questions() -> list[dict]:
 		SELECT question, COUNT(*) AS count
 		FROM qa_logs
 		GROUP BY question
-		ORDER BY count DESC
+		ORDER BY count DESC, MAX(created_at) DESC
 		LIMIT 10
 	"""
 

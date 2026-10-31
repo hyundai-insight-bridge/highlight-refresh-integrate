@@ -120,7 +120,8 @@ def build_summary_tab():
                 view_radio = gr.Radio(label="요약 방식", choices=VIEW_CHOICES, value=VIEW_THREE_LINES)
             with gr.Column(scale=1):
                 summarize_btn = gr.Button("요약하기", variant="primary")
-                summary_result = gr.Markdown()
+                # 처음 누를 때도 진행 표시가 보이게 빈 결과 칸에 높이를 둔다 (높이가 0이면 Gradio 진행 표시가 안 보임)
+                summary_result = gr.Markdown(min_height=80)
             with gr.Column():
                 merge_btn = gr.Button("병합하기 (2개 이상 선택)")
                 merge_result = gr.Markdown()
