@@ -16,11 +16,9 @@ def save_qa_log(log: QALog) -> int:
 	질문 기록 저장하기 (개인정보 가린 뒤)
 
 	순서
-	1. mask_pii()로 질문과 답변 속 전화번호·이메일을 가린다
-	   예) 010-1234-5678 → 010-****-5678, kim@naver.com → ki***@naver.com
-	2. 가린 질문·답변으로 새 QALog를 만든다
+	1. 가린 질문·답변으로 새 QALog를 만든다
 	   (받은 log는 그대로 두고 새로 만들어서, 부른 쪽의 값이 바뀌지 않게 함)
-	3. insert_qa_log()로 qa_logs에 저장하고 log_id를 돌려준다
+	2. insert_qa_log()로 qa_logs에 저장하고 log_id를 돌려준다
 
 	- 저장하는 값: 질문·답변·페르소나·route('rag'|'no_answer'|'chat'|'error')·근거 유무·
 	  응답 시간·토큰 수·원화 비용·오류 내용 (+ user_id·session_id)
