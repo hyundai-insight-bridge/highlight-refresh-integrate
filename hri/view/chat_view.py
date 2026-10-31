@@ -8,6 +8,7 @@ from hri.domain.schemas import AnswerResult, TermCard
 from hri.exception.errors import ExternalApiError, InvalidInputError, OutputFormatError
 from hri.service.report_service import owner_filter, search_reports
 from hri.service.term_service import MAX_TERM_LENGTH, explain_term
+from hri.view.history_view import build_history_panel
 
 logger = logging.getLogger(__name__)
 
@@ -47,11 +48,26 @@ CHAT_TITLE_STYLE = """
 }
 /* 소스·채팅 두 칸을 창 높이에 맞춤: 페이지 전체는 스크롤되지 않고, 남는 내용은 각 칸 안에서만 스크롤 */
 #chat-source-col,
-#chat-chat-col {
+#chat-chat-col,
+#chat-history-col {
 	height: calc(100vh - 6rem);
 	overflow: hidden;
 }
 #chat-source-col {
+	flex-wrap: nowrap;
+}
+/* 소스 내용: 남는 높이를 모두 쓰고 넘치면 이 안에서만 스크롤 (Gradio가 넣는 인라인 flex-grow를 덮어씀) */
+#chat-source-body {
+	flex: 1 1 0 !important;
+	min-height: 0;
+	overflow-y: auto;
+	flex-wrap: nowrap;
+}
+/* 과거 대화 기록 버튼: 소스 칸 맨 아래에 붙음 */
+#chat-history-btn {
+	flex: 0 0 auto !important;
+}
+#chat-history-col {
 	overflow-y: auto;
 }
 #chat-bot {
@@ -162,7 +178,8 @@ def build_chat_tab():
 
 	화면을 소스(3)·채팅(6) 두 칸으로 나누고, 스튜디오는 오른쪽에서 펼쳐지는 사이드바로 둔다. (UI 레퍼런스: 소스·채팅·스튜디오 3단 배치)
 	- 왼쪽(소스): 보고서 선택(여러 개 가능)·페르소나(입문자/실무자/전문가)·검색 옵션(k, MMR),
-	  답변이 끝나면 그 아래에 출처가 나온다.
+	  답변이 끝나면 그 아래에 출처가 나온다. 칸 맨 아래에는 '과거 대화 기록' 버튼이 붙어 있고, 누르면
+	  채팅 칸 자리에 과거 대화 기록(build_history_panel, 임세준)이 보인다 (연결은 build_app).
 	- 가운데(채팅): 추천 질문 버튼 3개(한 줄) → 대화창(gr.Chatbot) → 👍/👎 → 질문 입력칸·전송 버튼.
 	  질문 입력칸은 추천 질문 버튼보다 먼저 만들어야 해서 render=False로 만들고, 화면 맨 아래에서 render()로 놓는다.
 	- 오른쪽(스튜디오): gr.Sidebar(position="right")로 만들어 처음에는 접어 두고, 화면 오른쪽 끝의
@@ -179,17 +196,21 @@ def build_chat_tab():
 	with gr.Tab("질의응답", id=CHAT_TAB_ID, visible=False) as tab:
 		with gr.Row(equal_height=False):
 			# 왼쪽: 소스 (보고서 선택·페르소나·검색 옵션, 답변 뒤에는 출처)
+			# 소스 내용은 위쪽에서 남는 높이를 쓰며 넘치면 그 안에서 스크롤, '과거 대화 기록' 버튼은 칸 맨 아래에 붙는다
 			with gr.Column(scale=3, variant="panel", elem_id="chat-source-col"):
-				gr.Markdown("#### 소스", elem_id="chat-source-title")
-				report_dropdown = gr.Dropdown(label="보고서 선택 (여러 개 가능)", choices=[], multiselect=True)
-				persona = gr.Radio(PERSONA_CHOICES, value=DEFAULT_PERSONA, label="페르소나")
-				with gr.Accordion("검색 옵션", open=False):
-					k = gr.Slider(1, 10, value=DEFAULT_K, step=1, label="가져올 근거 수 (k)")
-					use_mmr = gr.Checkbox(label="MMR 사용 (서로 다른 근거 고르기)", value=False)
-				# 출처: 답변이 끝나면 respond_stream()이 채운다 (없으면 빈칸)
-				sources = gr.Markdown()
+				with gr.Column(elem_id="chat-source-body"):
+					gr.Markdown("#### 소스", elem_id="chat-source-title")
+					report_dropdown = gr.Dropdown(label="보고서 선택 (여러 개 가능)", choices=[], multiselect=True)
+					persona = gr.Radio(PERSONA_CHOICES, value=DEFAULT_PERSONA, label="페르소나")
+					with gr.Accordion("검색 옵션", open=False):
+						k = gr.Slider(1, 10, value=DEFAULT_K, step=1, label="가져올 근거 수 (k)")
+						use_mmr = gr.Checkbox(label="MMR 사용 (서로 다른 근거 고르기)", value=False)
+					# 출처: 답변이 끝나면 respond_stream()이 채운다 (없으면 빈칸)
+					sources = gr.Markdown()
+				# 누르면 채팅 칸 자리에 과거 대화 기록(build_history_panel, 임세준)이 보인다 (연결은 build_app)
+				history_btn = gr.Button("과거 대화 기록", elem_id="chat-history-btn")
 			# 가운데: 채팅 (추천 질문 → 대화창 → 질문 입력칸)
-			with gr.Column(scale=6, variant="panel", elem_id="chat-chat-col"):
+			with gr.Column(scale=6, variant="panel", elem_id="chat-chat-col") as chat_col:
 				gr.Markdown("#### 채팅", elem_id="chat-chat-title")
 				# 추천 질문: 처음에는 시작 질문(STARTER_QUESTIONS, 류현수)을 보여 주고, 답변이 끝나면 후속 질문으로 바꾼다
 				message = gr.Textbox(
@@ -211,6 +232,8 @@ def build_chat_tab():
 				with gr.Row(equal_height=True):
 					message.render()
 					send_btn = gr.Button("전송", variant="primary", scale=0, min_width=90)
+			# 가운데(채팅 칸 자리): 과거 대화 기록. 처음에는 숨김
+			build_history_panel()
 		# 오른쪽: 스튜디오 (용어 카드). gr.Sidebar라서 화면 오른쪽 끝의 버튼으로 펼치고 접는다 (처음에는 접힘)
 		with gr.Sidebar(label="용어 검색", position="right", open=False) as studio:
 			gr.Markdown("#### 용어검색")
@@ -220,6 +243,8 @@ def build_chat_tab():
 
 	chat_components.update(
 		tab=tab,
+		chat_col=chat_col,
+		history_btn=history_btn,
 		chatbot=chatbot,
 		message=message,
 		send_btn=send_btn,
