@@ -12,8 +12,8 @@ logger = logging.getLogger(__name__)
 # [장유빈] 지표 비교 · on_compare
 # ---------------------------------------------------------------------
 MIN_COMPARE_REPORTS = 2
-MAX_COMPARE_REPORTS = 5  # 한 번에 비교할 수 있는 보고서 수 (다 고르면 나머지 선택 칸을 막는다)
-PICK_PAGE_SIZE = 10  # 보고서 선택 창 한 페이지에 보여 줄 보고서 수
+MAX_COMPARE_REPORTS = 5  # 한 번에 비교할 수 있는 보고서 수 (COMPARE_TABLE_STYLE의 비활성화 선택자도 label.selected 5개 기준)
+PICK_LABEL = f"보고서 선택 (최대 {MAX_COMPARE_REPORTS}개)"  # 요약·분석, 질의응답 탭의 보고서 목록과 같은 라벨
 NEED_MORE_REPORTS_MESSAGE = "보고서를 2개 이상 선택하세요."
 NO_INDICATORS_MESSAGE = "선택한 보고서에서 비교할 지표를 찾지 못했습니다."
 NO_CHART_NOTE = "공통으로 나온 지표가 없어 차트는 만들지 않았습니다."
@@ -23,8 +23,9 @@ PICK_LIMIT_MESSAGE = f"보고서는 최대 {MAX_COMPARE_REPORTS}개까지 비교
 
 # 지표 비교표 탭 스타일
 # - 왼쪽(보고서 선택 창)·오른쪽 칸 높이를 화면에 맞춘다
-# - 왼쪽은 보고서 목록이 남는 높이를 모두 쓰고(페이지로 나누므로 스크롤 없음), 아래에 페이지 넘김·비교 버튼·진행바가 붙는다
-# - 보고서를 최대 개수만큼 고르면(limit-reached) 고르지 않은 칸은 흐리게 하고 누를 수 없게 한다
+# - 왼쪽 보고서 목록은 요약·분석, 질의응답 탭과 같은 모양이다 (summary_view.SUMMARY_TAB_STYLE의 보고서 목록 부분과 맞출 것)
+#   한 줄에 보고서 하나씩, 흰색·연한 회색 번갈아, 남는 높이를 모두 쓰고 넘치면 목록 안에서 스크롤,
+#   최대 개수만큼 고르면 나머지 보고서는 흐리게 하고 누를 수 없게 한다. 비교 버튼은 목록 아래 수평선 뒤에 붙는다
 # - 오른쪽은 펼친 칸(비교 차트·비교 표·ECOS 데이터)끼리 남는 높이를 1/N씩 나누고, 넘치면 칸 안에서 스크롤한다
 # - 표의 시점 열(2번째 열)은 'YYYYQN'(6글자)까지 한 줄로 보이게 자리를 잡는다
 COMPARE_TABLE_STYLE = """
@@ -35,25 +36,51 @@ COMPARE_TABLE_STYLE = """
 	min-height: 24rem;
 	flex-wrap: nowrap;
 }
-/* Gradio가 칸마다 flex-grow를 인라인으로 넣어서 !important로 덮어써야 남는 높이를 다 가져간다 (페이지로 나누므로 스크롤 없음) */
-#compare-left .compare-pick {
-	flex: 1 1 auto !important;
+#compare-left {
+	overflow: hidden;
 }
-#compare-left .compare-pick .wrap {
-	flex-direction: column;
-	align-items: stretch;
+/* 왼쪽 칸 안의 제목·버튼 등은 내용 높이만 씀 (Gradio가 넣는 flex-grow 때문에 버튼이 커지는 것을 막음) */
+#compare-left > * {
+	flex: 0 0 auto !important;
 }
-#compare-left .compare-pick.limit-reached label:not(.selected) {
-	opacity: 0.4;
-	pointer-events: none;
-}
-#compare-pager {
-	flex: 0 0 auto;
-	align-items: center;
+/* 보고서 목록 칸: 남는 높이를 모두 쓰고 넘치면 이 안에서만 스크롤
+   (보고서 목록(CheckboxGroup)은 Gradio가 Form으로 한 번 더 감싸서, 감싸는 칸(compare-report-body)에 높이를 준다) */
+#compare-left > #compare-report-body {
+	flex: 1 1 0 !important;
+	min-height: 0;
+	overflow-y: auto;
 	flex-wrap: nowrap;
 }
-#compare-pager .compare-page-text {
-	text-align: center;
+/* 보고서 목록: 한 줄에 보고서 하나씩 선택 박스와 함께 */
+#compare-report-list [data-testid="checkbox-group"] {
+	flex-direction: column;
+	flex-wrap: nowrap;
+	align-items: stretch;
+	gap: 0;
+}
+/* 보고서 줄 배경: 선택 여부와 상관없이 흰색·연한 회색 번갈아, 글자는 항상 기본 글자색 */
+#compare-report-list [data-testid="checkbox-group"] > label {
+	border-radius: 0;
+	background: var(--block-background-fill);
+	color: var(--body-text-color);
+}
+#compare-report-list [data-testid="checkbox-group"] > label:nth-of-type(even) {
+	background: var(--neutral-100);
+}
+.dark #compare-report-list [data-testid="checkbox-group"] > label:nth-of-type(even) {
+	background: var(--neutral-700);
+}
+/* 보고서를 최대 개수(MAX_COMPARE_REPORTS, 5개)만큼 고르면 나머지 보고서는 흐리게 하고 누를 수 없게 함
+   (Gradio가 고른 보고서 줄에 selected 클래스를 붙인다) */
+#compare-report-list [data-testid="checkbox-group"]:has(> label.selected ~ label.selected ~ label.selected ~ label.selected ~ label.selected) > label:not(.selected) {
+	opacity: 0.45;
+	pointer-events: none;
+}
+/* 비교 버튼 줄: 위에 수평선을 두어 보고서 목록과 구분 */
+#compare-actions {
+	flex-wrap: nowrap;
+	padding-top: 0.75rem;
+	border-top: 1px solid var(--border-color-primary);
 }
 #compare-right .compare-fold {
 	display: flex;
@@ -238,46 +265,20 @@ def _safe_ecos_reference(report_ids: list[int]) -> str:
 
 
 # ---------------------------------------------------------------------
-# [장유빈] 보고서 선택 창 · 전체 목록 + 선택 칸, 페이지 넘김, 최대 MAX_COMPARE_REPORTS개
-# pick(gr.State): {"reports": [(제목, report_id), ...], "selected": [report_id, ...], "page": 0부터 시작}
+# [장유빈] 보고서 선택 창 · 전체 목록 + 선택 칸, 최대 MAX_COMPARE_REPORTS개
+# pick(gr.State): {"reports": [(제목, report_id), ...], "selected": [report_id, ...] (고른 순서 = 비교 표 열 순서)}
 # ---------------------------------------------------------------------
 def new_pick() -> dict:
-	"""보고서 선택 창의 처음 상태 (목록·선택 없음, 첫 페이지)."""
-	return {"reports": [], "selected": [], "page": 0}
-
-
-def _page_count(pick: dict) -> int:
-	return max(1, -(-len(pick["reports"]) // PICK_PAGE_SIZE))
-
-
-def _page_reports(pick: dict) -> list[tuple[str, int]]:
-	start = pick["page"] * PICK_PAGE_SIZE
-	return pick["reports"][start:start + PICK_PAGE_SIZE]
+	"""보고서 선택 창의 처음 상태 (목록·선택 없음)."""
+	return {"reports": [], "selected": []}
 
 
 def _render_pick(pick: dict):
 	"""pick 상태를 화면에 보여 줄 값으로 바꾼다.
 
-	출력: (pick, 보고서 선택 칸, 페이지 글자, 이전 버튼, 다음 버튼)
+	출력: (pick, 보고서 선택 칸)
 	"""
-	pick["page"] = min(max(pick["page"], 0), _page_count(pick) - 1)
-	choices = _page_reports(pick)
-	page_ids = {rid for _, rid in choices}
-	classes = ["compare-pick"] + (["limit-reached"] if len(pick["selected"]) >= MAX_COMPARE_REPORTS else [])
-	checkbox = gr.update(
-		choices=choices,
-		value=[rid for rid in pick["selected"] if rid in page_ids],
-		label=f"비교할 보고서 (선택 {len(pick['selected'])}/{MAX_COMPARE_REPORTS})",
-		elem_classes=classes,
-	)
-	last = _page_count(pick) - 1
-	return (
-		pick,
-		checkbox,
-		f"{pick['page'] + 1} / {last + 1}",
-		gr.update(interactive=pick["page"] > 0),
-		gr.update(interactive=pick["page"] < last),
-	)
+	return pick, gr.update(choices=pick["reports"], value=list(pick["selected"]))
 
 
 def load_compare_reports(state: dict, pick: dict | None):
@@ -299,27 +300,21 @@ def load_compare_reports(state: dict, pick: dict | None):
 
 
 def reset_compare_reports(state: dict):
-	"""로그인 뒤: 선택을 비우고 첫 페이지부터 목록을 보여 준다."""
+	"""로그인 뒤: 선택을 비우고 목록을 보여 준다."""
 	return load_compare_reports(state, new_pick())
 
 
 def on_pick_change(value: list[int] | None, pick: dict):
-	"""선택 칸을 누르면: 이 페이지에서 고른 것을 전체 선택에 반영한다 (다른 페이지에서 고른 것은 그대로).
+	"""선택 칸을 누르면: 고른 보고서를 pick에 반영한다.
 
-	고른 순서를 지켜 비교 표 열 순서로 쓴다. MAX_COMPARE_REPORTS개를 넘으면 이번 선택은 받지 않고 안내를 띄운다.
+	고른 순서를 지켜 비교 표 열 순서로 쓴다. 화면에서는 5개를 고르면 나머지가 비활성화되지만(COMPARE_TABLE_STYLE),
+	키보드로 고르는 경우를 위해 MAX_COMPARE_REPORTS개를 넘으면 이번 선택은 받지 않고 안내를 띄운다.
 	"""
 	value = [int(v) for v in (value or [])]
-	page_ids = {rid for _, rid in _page_reports(pick)}
-	selected = [rid for rid in pick["selected"] if rid not in page_ids or rid in value]
+	selected = [rid for rid in pick["selected"] if rid in value]
 	selected += [rid for rid in value if rid not in selected]
 	if len(selected) > MAX_COMPARE_REPORTS:
 		gr.Warning(PICK_LIMIT_MESSAGE)
 	else:
 		pick["selected"] = selected
-	return _render_pick(pick)
-
-
-def on_pick_page(pick: dict, delta: int):
-	"""이전·다음 버튼: 페이지를 delta만큼 옮긴다."""
-	pick["page"] += delta
 	return _render_pick(pick)

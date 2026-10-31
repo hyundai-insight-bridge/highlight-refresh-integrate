@@ -15,8 +15,8 @@ from hri.view.report_view import build_upload_tab, build_report_list_panel, on_v
 from hri.view.summary_view import build_summary_tab, on_summarize, on_request, summary_components, on_merge
 from hri.view.chat_view import build_chat_tab, chat_components, connect_chat_events, refresh_report_choices, CHAT_TITLE_STYLE
 from hri.view.indicator_view import (
-	on_compare_picked, new_pick, load_compare_reports, reset_compare_reports, on_pick_change, on_pick_page,
-	MAX_COMPARE_REPORTS, COMPARE_TABLE_STYLE, COMPARE_TABLE_SCRIPT
+	on_compare_picked, new_pick, load_compare_reports, reset_compare_reports, on_pick_change,
+	PICK_LABEL, COMPARE_TABLE_STYLE, COMPARE_TABLE_SCRIPT
 )
 from hri.view.history_view import build_history_tab, history_components, on_load_history, on_restore, on_prev_page, on_next_page, HISTORY_TABLE_STYLE
 from hri.view.admin_view import build_admin_tab, admin_components, on_refresh
@@ -137,7 +137,7 @@ def build_app():
 	- 로그인 화면: build_login_tab() (탭 줄 없이 가운데 칸만 보임, 처음에는 이것만 보임)
 	- 보고서 탭: 안에 작은 탭 3개
 		- 보고서 목록·검색: build_report_list_panel()
-		- 지표 비교표: 왼쪽 보고서 선택 창(목록 + 선택 칸 + 페이지 넘김 + 비교 버튼), 오른쪽 접고 펴는 비교 차트 · 비교 표 · ECOS 데이터
+		- 지표 비교표: 왼쪽 보고서 선택 창(요약·분석, 질의응답 탭과 같은 보고서 목록 + 비교 버튼), 오른쪽 접고 펴는 비교 차트 · 비교 표 · ECOS 데이터
 		- 업로드: build_upload_tab()
 	- 요약·분석, 질의응답, 내 기록, 관리자 탭: 각 담당자의 build_*_tab()
 	  (로그인 전에는 숨김, 관리자 탭은 관리자만 보임)
@@ -187,18 +187,18 @@ def build_app():
 					with gr.Tab("지표 비교표", id="compare") as compare_tab:
 						# 좌우 1:3 (왼쪽: 보고서 선택 창, 오른쪽: 비교 차트·비교 표·ECOS 데이터)
 						with gr.Row():
-							# 보고서 선택 창: 전체 목록 + 선택 칸(최대 MAX_COMPARE_REPORTS개), 페이지 넘김, 비교 버튼, 진행바가 위아래를 채움
-							with gr.Column(scale=1, elem_id="compare-left"):
+							# 보고서 선택 창: 요약·분석, 질의응답 탭과 같은 보고서 목록(최대 MAX_COMPARE_REPORTS개, 넘치면 목록 안에서 스크롤)
+							# 아래에 수평선 뒤 비교 버튼, 진행바가 붙음 (COMPARE_TABLE_STYLE)
+							with gr.Column(scale=1, variant="panel", elem_id="compare-left"):
 								compare_pick = gr.State(new_pick())
-								compare_reports = gr.CheckboxGroup(label=f"비교할 보고서 (선택 0/{MAX_COMPARE_REPORTS})", choices=[], elem_classes="compare-pick")
-								with gr.Row(elem_id="compare-pager"):
-									compare_prev_btn = gr.Button("◀", size="sm", min_width=0, interactive=False)
-									compare_page = gr.Markdown("1 / 1", elem_classes="compare-page-text")
-									compare_next_btn = gr.Button("▶", size="sm", min_width=0, interactive=False)
-								compare_btn = gr.Button("지표 추출·비교", variant="primary")
+								gr.Markdown("#### 보고서")
+								with gr.Column(elem_id="compare-report-body"):
+									compare_reports = gr.CheckboxGroup(label=PICK_LABEL, choices=[], elem_id="compare-report-list")
+								with gr.Row(elem_id="compare-actions"):
+									compare_btn = gr.Button("지표 추출·비교", variant="primary", size="sm", min_width=0)
 								# 비교 중 진행바를 비교 차트 대신 버튼 바로 아래에 보여 주는 자리 (평소에는 빈 칸)
 								compare_progress = gr.Markdown(min_height=80)
-								compare_pick_outputs = [compare_pick, compare_reports, compare_page, compare_prev_btn, compare_next_btn]
+								compare_pick_outputs = [compare_pick, compare_reports]
 							# 접고 펼 수 있는 3칸 (처음에는 모두 접힘, 비교가 끝나면 비교 차트를 펼침). 펼친 칸끼리 남는 높이를 똑같이 나눔 (COMPARE_TABLE_STYLE)
 							# 비교 표·ECOS 데이터는 칸 높이에 맞춰 페이지로 나눔 (COMPARE_TABLE_SCRIPT)
 							with gr.Column(scale=3, elem_id="compare-right"):
@@ -313,11 +313,9 @@ def build_app():
 			show_progress_on=compare_progress
 		)
 
-		# 보고서 선택 창: 탭을 열면 목록 다시 읽기, 선택 칸 누르면 선택 반영, 이전·다음 버튼으로 페이지 넘기기
+		# 보고서 선택 창: 탭을 열면 목록 다시 읽기, 선택 칸 누르면 선택 반영
 		compare_tab.select(fn=load_compare_reports, inputs=[state, compare_pick], outputs=compare_pick_outputs)
 		compare_reports.input(fn=on_pick_change, inputs=[compare_reports, compare_pick], outputs=compare_pick_outputs)
-		compare_prev_btn.click(fn=lambda pick: on_pick_page(pick, -1), inputs=compare_pick, outputs=compare_pick_outputs)
-		compare_next_btn.click(fn=lambda pick: on_pick_page(pick, 1), inputs=compare_pick, outputs=compare_pick_outputs)
 
 		# 업로드 버튼 누르면 진행 상황·결과를 보여주고, 요약·질의응답 탭 보고서 드롭다운 갱신
 		upload_components["upload_btn"].click(

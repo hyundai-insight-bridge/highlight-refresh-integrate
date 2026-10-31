@@ -1,12 +1,11 @@
-"""보고서 선택 창 테스트 · 목록·선택 칸·페이지 넘김·최대 선택 수 (장유빈)"""
+"""보고서 선택 창 테스트 · 목록·선택 칸·최대 선택 수 (장유빈)"""
 from hri.view import indicator_view
 from hri.view.indicator_view import (
 	MAX_COMPARE_REPORTS,
-	PICK_PAGE_SIZE,
+	PICK_LIMIT_MESSAGE,
 	load_compare_reports,
 	new_pick,
 	on_pick_change,
-	on_pick_page,
 	reset_compare_reports,
 )
 
@@ -31,12 +30,11 @@ def _use_reports(monkeypatch, count: int):
 USER = {"user": {"user_id": "kim", "role": "user"}}
 
 
-def test_first_page_shows_page_size_reports(monkeypatch):
+def test_shows_all_reports_without_paging(monkeypatch):
 	_use_reports(monkeypatch, 23)
-	pick, checkbox, page, prev_btn, next_btn = reset_compare_reports(USER)
-	assert [rid for _, rid in checkbox["choices"]] == list(range(1, PICK_PAGE_SIZE + 1))
-	assert page == "1 / 3"
-	assert prev_btn["interactive"] is False and next_btn["interactive"] is True
+	pick, checkbox = reset_compare_reports(USER)
+	assert [rid for _, rid in checkbox["choices"]] == list(range(1, 24))
+	assert checkbox["value"] == []
 
 
 def test_normal_user_sees_only_own_reports(monkeypatch):
@@ -45,39 +43,31 @@ def test_normal_user_sees_only_own_reports(monkeypatch):
 	assert seen == ["kim"]
 
 
-def test_next_and_prev_page(monkeypatch):
+def test_selection_keeps_click_order(monkeypatch):
 	_use_reports(monkeypatch, 23)
-	pick = reset_compare_reports(USER)[0]
-	pick, checkbox, page, prev_btn, next_btn = on_pick_page(on_pick_page(pick, 1)[0], 1)
-	assert [rid for _, rid in checkbox["choices"]] == [21, 22, 23]
-	assert page == "3 / 3" and next_btn["interactive"] is False
-	assert on_pick_page(pick, 5)[2] == "3 / 3"  # 마지막 페이지를 넘지 않는다
+	pick = on_pick_change([3], reset_compare_reports(USER)[0])[0]
+	pick, checkbox = on_pick_change([1, 3], pick)
+	assert pick["selected"] == [3, 1]  # 고른 순서 = 비교 표 열 순서
+	assert checkbox["value"] == [3, 1]
 
 
-def test_selection_is_kept_across_pages(monkeypatch):
-	_use_reports(monkeypatch, 23)
-	pick = on_pick_change([1, 2], reset_compare_reports(USER)[0])[0]
-	pick = on_pick_page(pick, 1)[0]
-	pick, checkbox, *_ = on_pick_change([11], pick)
-	assert pick["selected"] == [1, 2, 11]
-	assert checkbox["value"] == [11]
-	assert checkbox["label"].endswith(f"(선택 3/{MAX_COMPARE_REPORTS})")
-
-
-def test_uncheck_on_page_removes_only_that_report(monkeypatch):
+def test_uncheck_removes_only_that_report(monkeypatch):
 	_use_reports(monkeypatch, 23)
 	pick = on_pick_change([1, 2], reset_compare_reports(USER)[0])[0]
 	pick = on_pick_change([2], pick)[0]
 	assert pick["selected"] == [2]
 
 
-def test_more_than_max_is_rejected_and_rest_disabled(monkeypatch):
+def test_more_than_max_is_rejected(monkeypatch):
 	_use_reports(monkeypatch, 23)
-	pick, checkbox, *_ = on_pick_change([1, 2, 3, 4, 5], reset_compare_reports(USER)[0])
-	assert "limit-reached" in checkbox["elem_classes"]
-	pick, checkbox, *_ = on_pick_change([1, 2, 3, 4, 5, 6], pick)
+	warned = []
+	monkeypatch.setattr(indicator_view.gr, "Warning", lambda m, *a, **k: warned.append(m))
+	pick, checkbox = on_pick_change([1, 2, 3, 4, 5], reset_compare_reports(USER)[0])
+	pick, checkbox = on_pick_change([1, 2, 3, 4, 5, 6], pick)
 	assert pick["selected"] == [1, 2, 3, 4, 5]
 	assert checkbox["value"] == [1, 2, 3, 4, 5]
+	assert warned == [PICK_LIMIT_MESSAGE]
+	assert MAX_COMPARE_REPORTS == 5  # COMPARE_TABLE_STYLE의 비활성화 선택자(label.selected 5개)와 맞아야 한다
 
 
 def test_reload_keeps_selection_still_in_list(monkeypatch):
@@ -93,5 +83,5 @@ def test_list_error_shows_empty_list(monkeypatch):
 		raise RuntimeError("DB 오류")
 
 	monkeypatch.setattr(indicator_view, "search_reports", broken)
-	pick, checkbox, page, *_ = load_compare_reports(USER, new_pick())
-	assert checkbox["choices"] == [] and page == "1 / 1"
+	pick, checkbox = load_compare_reports(USER, new_pick())
+	assert checkbox["choices"] == [] and checkbox["value"] == []
