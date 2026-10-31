@@ -207,8 +207,7 @@ EMPTY_CELL = "-"  # 그 보고서에 없는 지표 칸
 REVIEW_MARK = "*"  # 차트에서 읽어 확인이 필요한 값(needs_review) 표시
 REVIEW_NOTE = f"{REVIEW_MARK} 차트에서 읽은 추정값이라 확인이 필요합니다."
 DIFF_HEADER = "차이(최대−최소)"  # 보고서 2개 이상을 비교할 때 표 맨 끝에 붙이는 열 이름
-ECOS_TITLE = "### ECOS 참고 (한국은행)"  # 표 아래에 붙이는 ECOS 섹션 제목
-ECOS_NOTE = "ECOS 값은 한국은행 통계라서 보고서 수치와 기준(계절조정·전기비 등)이 다를 수 있습니다."
+ECOS_NOTE = "ECOS 값은 한국은행 경제 통계 시스템의 데이터입니다. 보고서 수치와 기준(계절조정·전기비 등)이 다를 수 있습니다."
 MAX_ECOS_ROWS = 6  # ECOS 값은 최근 몇 줄까지 보여 줄지
 MAX_UNIT_GROUPS = 3  # 차트 하나에 그리는 단위 묶음 수 (단위가 같은 지표끼리 한 칸)
 MAX_BARS_PER_GROUP = 8  # 한 칸에 그리는 지표·시점 수 (너무 많으면 글자가 겹친다)
@@ -435,7 +434,7 @@ def build_ecos_reference(report_ids: list[int]) -> str:
 
 	table = _rows_to_markdown(["구분", "시점", "값", "단위"], body)
 	reason = f"비교한 지표: {name}" + (f" ({query.reason})" if query.reason else "")
-	return f"{ECOS_TITLE}\n\n{reason}\n\n{table}\n\n{ECOS_NOTE}"
+	return f"{reason}\n\n{table}\n\n{ECOS_NOTE}"
 
 
 def _use_korean_font() -> str | None:
