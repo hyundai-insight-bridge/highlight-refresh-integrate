@@ -41,6 +41,7 @@ LOGOUT_STYLE = """
 	position: absolute;
 	top: 0;
 	right: 0;
+	z-index: 1;  /* 뒤에 오는 탭 줄이 버튼을 덮어 클릭이 안 되지 않게 */
 }
 </style>
 """
@@ -133,21 +134,49 @@ def show_chat():
 	return gr.update(visible=True), gr.update(visible=False)
 
 
+def fill_first_screen(keyword, state):
+	"""
+	로그인 뒤 첫 화면 채우기
+
+	로그인한 사람의 역할(role)에 맞는 첫 화면 내용을 채운다.
+	- 일반 사용자: 보고서 탭의 보고서 목록 (on_report_search)
+	- 관리자: 관리자 대시보드 (on_refresh)
+	- 로그인 실패(state의 user가 None): 아무것도 바꾸지 않음
+
+	- 돌려주는 값은 [보고서 목록 표, 표의 report_id 목록, 안내 문구] + 관리자 대시보드 출력 칸 순서다
+
+	입력: keyword (보고서 검색어), state (gr.State)
+	출력: list
+	"""
+	keep_report = [gr.update()] * 3
+	keep_admin = [gr.update()] * len(admin_components["outputs"])
+	user = state["user"]
+
+	if user == None:
+		return keep_report + keep_admin
+	if user["role"] == "admin":
+		return keep_report + list(on_refresh())
+	return list(on_report_search(keyword, state)) + keep_admin
+
+
 def build_app():
 	"""
 	메인 화면 만들기
 
-	gr.Blocks 안에 제목·로그아웃 버튼과 탭 6개를 gr.Tabs로 배치한다.
+	gr.Blocks 안에 로그아웃 버튼과 로그인 화면, 탭 줄(gr.Tabs) 2개를 배치한다.
 	- 로그인 화면: build_login_tab() (탭 줄 없이 가운데 칸만 보임, 처음에는 이것만 보임)
+	- 관리자 탭 줄: 관리자 탭 (관리자만 보임)
+	- 사용자 탭 줄: 보고서·요약·분석·질의응답 탭 (일반 사용자만 보임, 첫 화면은 보고서 탭)
+	  탭 하나하나의 visible을 바꾸면 Gradio(6.30)에서 탭을 눌러도 이동하지 않아서,
+	  탭은 항상 보이게 두고 로그인·로그아웃 때 탭 줄을 통째로 보이기·숨기기 한다
 	- 보고서 탭: 안에 작은 탭 3개
 		- 보고서 목록·검색: build_report_list_panel()
 		- 지표 비교표: 비교할 보고서 드롭다운 + 비교 버튼 + 비교표 + 차트
 		- 업로드: build_upload_tab()
 	- 요약·분석, 질의응답(안에 과거 대화 기록), 관리자 탭: 각 담당자의 build_*_tab()
-	  (로그인 전에는 숨김, 관리자 탭은 관리자만 보임)
 
 	버튼 연결
-	- 로그인 버튼 → on_login (탭 보이기, 로그아웃 버튼 보이기, 질의응답 탭 선택, 비교 보고서 목록 채우기)
+	- 로그인 버튼 → on_login (역할에 맞는 탭 줄 보이기, 로그아웃 버튼 보이기, 비교 보고서 목록 채우기)
 	- 로그아웃 버튼 → on_logout (로그인 탭만 남기기)
 	- 요약 보기 · 질의응답으로 이동 버튼 → on_view_summary · on_go_chat (탭 이동 + 보고서 드롭다운 바꾸기)
 	- 지표 추출·비교 버튼 → on_compare (비교표, 차트 보여주기)
@@ -162,6 +191,7 @@ def build_app():
 	- 질의응답 탭의 과거 대화 기록 버튼 → show_history · on_load_history (채팅 칸 대신 기록 칸, 대화별 기록 표·대화 선택 목록 채우기)
 	- 채팅으로 돌아가기 · 대화 이어가기 버튼 → show_chat (기록 칸을 닫고 채팅 칸 보이기)
 	- 로그인 뒤 → clear_other_user_screen (다른 사람이 로그인했으면 이전 사용자의 화면 내용 비우기)
+	  → fill_first_screen (일반 사용자는 보고서 목록, 관리자는 대시보드 채우기)
 
 	입력: 없음
 	출력: gr.Blocks (만든 화면)
@@ -178,13 +208,14 @@ def build_app():
 		# 로그인 화면 (탭 줄 없이 가운데 칸만 보임, 로그인하면 숨김)
 		login_tab = build_login_tab()
 
-		# 로그인 뒤에만 보이는 탭들 (처음에는 숨김, on_login이 보이게 함)
-		with gr.Tabs(visible=False) as tabs:
-			# 관리자 탭 (관리자 로그인 때 선택이 되려면 숨겨진 탭들보다 앞에 있어야 해서 로그인 탭 바로 뒤에 둠)
-			admin_tab = build_admin_tab()			
+		# 관리자 탭 줄 (처음에는 숨김, 관리자가 로그인하면 on_login이 보이게 함)
+		with gr.Tabs(visible=False) as admin_tabs:
+			build_admin_tab()
 
+		# 사용자 탭 줄 (처음에는 숨김, 일반 사용자가 로그인하면 on_login이 보이게 함)
+		with gr.Tabs(selected="report", visible=False) as tabs:
 			# 보고서 탭
-			with gr.Tab("보고서", id="report", visible=False) as report_tab:
+			with gr.Tab("보고서", id="report") as report_tab:
 				with gr.Tabs():
 					# 보고서 목록·검색
 					with gr.Tab("보고서 목록·검색", id="report_list"):
@@ -201,8 +232,8 @@ def build_app():
 					build_upload_tab()
 
 			# 요약·분석, 질의응답 탭 (과거 대화 기록은 질의응답 탭 안에 있음)
-			summary_tab = build_summary_tab()
-			chat_tab = build_chat_tab()
+			build_summary_tab()
+			build_chat_tab()
 		# 질의응답 탭 버튼 연결 (state가 필요해서 build_app에서 부름)
 		connect_chat_events(state)
 
@@ -210,7 +241,7 @@ def build_app():
 		login_components["login_btn"].click(
 			fn=on_login,
 			inputs=[login_components["user_id"], login_components["password"]],
-			outputs=[state, login_tab, report_tab, summary_tab, chat_tab, admin_tab, logout_btn, tabs, compare_reports, login_components["message"]]
+			outputs=[state, login_tab, tabs, admin_tabs, logout_btn, compare_reports, login_components["message"]]
 		).then(
 			fn=clear_other_user_screen,
 			inputs=[state, screen_owner],
@@ -227,13 +258,18 @@ def build_app():
 			# 로그인하면 질의응답 탭은 항상 채팅 칸부터 보이게 (이전 사용자가 열어 둔 과거 대화 기록 칸 닫기)
 			fn=show_chat,
 			outputs=[chat_components["chat_col"], history_components["column"]]
+		).then(
+			# 첫 화면 채우기 (탭을 고르지 않고 바로 보이므로 탭 선택 이벤트 대신 여기서 채움)
+			fn=fill_first_screen,
+			inputs=[report_list_components["keyword"], state],
+			outputs=[report_list_components["table"], report_list_components["listed_ids"], report_list_components["message"]] + admin_components["outputs"]
 		)
 
 		# 로그아웃 버튼 누르면 로그아웃
 		logout_btn.click(
 			fn=on_logout,
 			inputs=state,
-			outputs=[state, login_tab, report_tab, summary_tab, chat_tab, admin_tab, logout_btn, tabs, compare_reports]
+			outputs=[state, login_tab, tabs, admin_tabs, logout_btn, compare_reports]
 		)
 
 		# 보고서 탭을 열면 보고서 목록 불러오기 (목록 메뉴가 처음부터 펼쳐져 있어서 펼칠 때 대신 여기서 불러옴)

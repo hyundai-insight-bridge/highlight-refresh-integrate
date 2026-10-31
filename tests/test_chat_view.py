@@ -222,7 +222,7 @@ def test_build_and_connect_do_not_raise():
 		connect_chat_events(state)
 	assert isinstance(tab, gr.Tab)
 	assert tab.id == "chat"
-	assert tab.visible is False
+	assert tab.visible is True  # 로그인 전에는 build_app()이 탭 줄을 통째로 숨긴다
 	components = chat_view.chat_components
 	assert len(components["suggest_buttons"]) == 3
 	assert components["persona"].value == "실무자"

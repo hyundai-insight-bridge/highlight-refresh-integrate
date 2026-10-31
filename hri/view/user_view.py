@@ -153,30 +153,28 @@ def on_login(user_id: str, password: str):
 	3. 성공하면 사용자 정보를 gr.State에 저장할 state로 만든다
 	4. 지표 비교 탭에서 고를 보고서 목록을 search_reports()로 만든다 ((제목, report_id) 쌍)
 	   (일반 사용자는 본인이 올린 보고서만, 관리자는 전체)
-	5. 로그인 탭은 숨기고, 역할(role)에 맞는 탭만 보이게 한다
-	- 일반 사용자("user"): 보고서·요약·질의응답 탭을 보이고 보고서 탭으로 이동 (과거 대화 기록은 질의응답 탭 안에 있음)
-	- 관리자("admin"): 관리자 탭만 보이고 관리자 탭으로 이동
+	5. 로그인 탭은 숨기고, 역할(role)에 맞는 탭 줄만 보이게 한다
+	- 일반 사용자("user"): 사용자 탭 줄(보고서·요약·질의응답)을 보이고 보고서 탭으로 이동 (과거 대화 기록은 질의응답 탭 안에 있음)
+	- 관리자("admin"): 관리자 탭 줄만 보임
 	(관리자는 대시보드만 쓰고, 내부 자료는 DB에 직접 넣는다)
 
-	- 돌려주는 값 10개는 build_app()의 outputs 순서와 같아야 한다
-	  [state, 로그인 탭, 보고서 탭, 요약 탭, 질의응답 탭, 관리자 탭,
-	   로그아웃 버튼, 탭 선택, 비교할 보고서 목록, 메시지]
+	- 탭 하나하나의 visible을 바꾸면 Gradio(6.30)에서 탭을 눌러도 이동하지 않거나 숨긴 탭이 남아서,
+	  탭은 항상 보이게 두고 탭 줄(gr.Tabs) 두 개를 통째로 보이기·숨기기 한다
+	- 돌려주는 값 7개는 build_app()의 outputs 순서와 같아야 한다
+	  [state, 로그인 탭, 사용자 탭 줄, 관리자 탭 줄, 로그아웃 버튼, 비교할 보고서 목록, 메시지]
 	- gr.update()는 "이 부품은 바꾸지 않음"이라는 뜻이다
 
 	입력: user_id (아이디), password (비밀번호)
-	출력: tuple (값 10개)
+	출력: tuple (값 7개)
 	"""
-	# 1) 빈칸이면 메시지만 보여줌 (나머지 9개는 그대로)
+	# 1) 빈칸이면 메시지만 보여줌 (나머지 6개는 그대로)
 	if not user_id or not password:
 		return (
 			gr.update(),  # state
 			gr.update(),  # 로그인 탭
-			gr.update(),  # 보고서 탭
-			gr.update(),  # 요약 탭
-			gr.update(),  # 질의응답 탭
-			gr.update(),  # 관리자 탭
+			gr.update(),  # 사용자 탭 줄
+			gr.update(),  # 관리자 탭 줄
 			gr.update(),  # 로그아웃 버튼
-			gr.update(),  # 탭 선택
 			gr.update(),  # 비교할 보고서 목록
 			"아이디와 비밀번호를 입력하세요."
 		)
@@ -188,12 +186,9 @@ def on_login(user_id: str, password: str):
 		return (
 			gr.update(),  # state
 			gr.update(),  # 로그인 탭
-			gr.update(),  # 보고서 탭
-			gr.update(),  # 요약 탭
-			gr.update(),  # 질의응답 탭
-			gr.update(),  # 관리자 탭
+			gr.update(),  # 사용자 탭 줄
+			gr.update(),  # 관리자 탭 줄
 			gr.update(),  # 로그아웃 버튼
-			gr.update(),  # 탭 선택
 			gr.update(),  # 비교할 보고서 목록
 			"아이디 또는 비밀번호가 올바르지 않습니다."
 		)
@@ -222,26 +217,16 @@ def on_login(user_id: str, password: str):
 	except Exception:
 		choices = []
 
-	# 관리자면 관리자 탭만, 일반 사용자면 사용자 탭들만 보여줌
-	if user.role == "admin":
-		show_admin = True
-		show_user_tabs = False
-		first_tab = "admin"
-	else:
-		show_admin = False
-		show_user_tabs = True
-		first_tab = "report"
+	# 관리자면 관리자 탭 줄만, 일반 사용자면 사용자 탭 줄만 보여줌
+	show_admin = user.role == "admin"
 
-	# 5) 로그인 탭은 숨기고 역할에 맞는 탭만 보여줌
+	# 5) 로그인 탭은 숨기고 역할에 맞는 탭 줄만 보여줌
 	return (
 		state,
 		gr.update(visible=False),  # 로그인 칸
-		gr.update(visible=show_user_tabs),  # 보고서 탭
-		gr.update(visible=show_user_tabs),  # 요약 탭
-		gr.update(visible=show_user_tabs),  # 질의응답 탭
-		gr.update(visible=show_admin),  # 관리자 탭
+		gr.Tabs(selected="report", visible=not show_admin),  # 사용자 탭 줄 (첫 화면은 보고서 탭)
+		gr.update(visible=show_admin),  # 관리자 탭 줄
 		gr.update(visible=True),  # 로그아웃 버튼
-		gr.Tabs(selected=first_tab, visible=True),  # 탭 줄 보이기 + 첫 화면 탭으로 이동 (관리자: 관리자 탭, 일반 사용자: 보고서 탭)
 		gr.update(choices=choices, value=[]),  # 비교할 보고서 목록
 		""  # 메시지 지우기
 	)
@@ -286,15 +271,14 @@ def on_logout(state):
 	순서
 	1. state의 사용자 정보를 지우고 session_id를 uuid4로 새로 만든다
 	   (선택했던 보고서와 마지막 기록 번호도 비운다)
-	2. 로그인 탭만 보이게 하고 나머지 탭과 로그아웃 버튼은 숨긴다
-	3. 탭 줄을 숨겨서 로그인 칸만 보이게 하고, 비교할 보고서 목록도 비운다
+	2. 로그인 탭만 보이게 하고 탭 줄 두 개와 로그아웃 버튼은 숨긴다
+	3. 비교할 보고서 목록도 비운다
 
-	- 돌려주는 값 9개는 build_app()의 outputs 순서와 같아야 한다
-	  [state, 로그인 탭, 보고서 탭, 요약 탭, 질의응답 탭, 관리자 탭,
-	   로그아웃 버튼, 탭 선택, 비교할 보고서 목록]
+	- 돌려주는 값 6개는 build_app()의 outputs 순서와 같아야 한다
+	  [state, 로그인 탭, 사용자 탭 줄, 관리자 탭 줄, 로그아웃 버튼, 비교할 보고서 목록]
 
 	입력: state (gr.State에 들어 있는 딕셔너리)
-	출력: tuple (값 9개)
+	출력: tuple (값 6개)
 	"""
 	# 1) 사용자 정보 지우고 session_id 새로 만들기
 	state["user"] = None
@@ -306,11 +290,8 @@ def on_logout(state):
 	return (
 		state,
 		gr.update(visible=True),  # 로그인 칸
-		gr.update(visible=False),  # 보고서 탭
-		gr.update(visible=False),  # 요약 탭
-		gr.update(visible=False),  # 질의응답 탭
-		gr.update(visible=False),  # 관리자 탭
+		gr.Tabs(selected="report", visible=False),  # 사용자 탭 줄 숨기기 (다음 로그인 때 보고서 탭부터 보이게 미리 선택)
+		gr.update(visible=False),  # 관리자 탭 줄
 		gr.update(visible=False),  # 로그아웃 버튼
-		gr.Tabs(visible=False),  # 탭 줄 숨기기 (로그인 칸만 보임)
 		gr.update(choices=[], value=[])  # 비교할 보고서 목록 비우기
 	)

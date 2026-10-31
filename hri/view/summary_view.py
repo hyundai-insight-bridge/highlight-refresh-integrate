@@ -210,12 +210,12 @@ def build_summary_tab():
       여러 보고서를 요약하면 보고서 1건이 1페이지이고, 결과 칸 아래의 이전·다음 버튼으로 넘긴다 (1건이면 버튼 숨김).
       결과가 길면 결과 칸 안에서만 스크롤된다.
     - 아래: 자연어 요청과 요청 실행 버튼 (이후 삭제 예정). 필요한 만큼만 쓰고 남는 높이는 위 두 칸이 쓴다.
-    탭은 로그인 전에는 숨겨 둔 채(visible=False) 만들고, 로그인하면 on_login이 보이게 한다.
+    탭은 사용자 탭 줄(gr.Tabs) 안에 보이게 만들고, 로그인 전에는 build_app()이 탭 줄을 통째로 숨긴다.
     이벤트 연결은 gr.State가 필요해서 build_app()에서 한다. 배치 스타일은 SUMMARY_TAB_STYLE(head에 넣음)
 
     반환: gr.Tab (컴포넌트는 summary_components로 꺼내 쓴다)
     """
-    with gr.Tab("요약, 분석", id=SUMMARY_TAB_ID, visible=False) as tab:
+    with gr.Tab("요약, 분석", id=SUMMARY_TAB_ID) as tab:
         with gr.Column(elem_id="summary-body"):
             with gr.Row(equal_height=True, elem_id="summary-main-row"):
                 # 왼쪽: 보고서 목록(선택 박스)과 요약·병합 버튼. 목록이 남는 높이를 쓰고 버튼은 칸 맨 아래에 붙는다
