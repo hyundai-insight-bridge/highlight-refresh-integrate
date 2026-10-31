@@ -288,11 +288,13 @@ def build_admin_tab():
 	- 관리자 계정에만 보이도록 처음에는 숨겨 둔다 (visible=False, 관리자가 로그인하면 on_login이 보이게 함)
 	- 새로고침 버튼은 state가 필요 없어서 여기서 바로 on_refresh()와 연결한다
 	- 새로고침 버튼은 화면 오른쪽 위에 둔다
-	- 화면 배치 (위에서 아래 순서)
-	  1. 문서 관리(보고서 업로드·보고서 목록): 중요해서 맨 위에 둔다
-	  2. 사용 현황: 표 3개 카드를 한 줄에, 일별 차트 카드는 그 아래에 넓게
-	  3. 답변 품질(왼쪽)·성능 비용(오른쪽) 카드를 나란히
-	  4. 운영 상태(최근 에러 로그)는 맨 아래에 넓게
+	- 화면 배치: 머리글(제목·새로고침) 아래에 구역별 탭(gr.Tabs)을 두어 한 화면에 한 구역씩 보여 준다
+	  1. 📁 문서 관리(보고서 업로드·보고서 목록): 중요해서 첫 번째 탭
+	  2. 📊 사용 현황: 일별 차트 카드를 위에 넓게, 표 3개 카드는 그 아래 한 줄에
+	  3. 💬 답변 품질
+	  4. ⚡ 성능·비용
+	  5. 🛠️ 운영 상태(최근 에러 로그)
+	  - 새로고침·탭 자동 갱신은 모든 탭의 내용을 한 번에 갱신한다
 	- 구역마다 카드(gr.Column(variant="panel"))로 묶고, 표마다 작은 제목(####)을 붙인다 (CSS 없이 Gradio 옵션만 사용, 차트는 높이 480으로 넓게)
 	- 표는 gr.Dataframe으로 보여 준다 (옅은 선·머리글 배경은 Dataframe 기본 모양, 모양은 _admin_table()에서 한 번에 정함)
 	- 최근 에러 로그 표는 column_widths로 시각·사용자 칸을 좁게 고정해 줄바꿈되지 않게 하고, 에러 칸을 넓힌다
@@ -309,64 +311,73 @@ def build_admin_tab():
 			gr.Markdown("## 관리자 대시보드")
 			refresh_btn = gr.Button("새로고침", variant="primary", scale=0, min_width=120)
 
-		# 문서 관리 (중요해서 맨 위에: 업로드는 왼쪽, 보고서 목록은 오른쪽)
-		with gr.Column(variant="panel"):
-			gr.Markdown("### 문서 관리 · 보고서 업로드")
-			with gr.Row():
-				with gr.Column(scale=5, variant="panel"):
-					gr.Markdown("#### 보고서 업로드")
-					upload_file = gr.File(label="보고서 PDF", file_types=[".pdf"], file_count="multiple", type="filepath")
-					upload_btn = gr.Button("업로드", variant="primary")
-					upload_result = gr.Markdown()
-				with gr.Column(scale=7, variant="panel"):
-					gr.Markdown("#### 보고서 목록")
-					reports = _admin_table()
+		# 구역별 탭 (한 화면에 모든 통계를 늘어놓지 않고 구역마다 탭으로 나눔, 새로고침 버튼은 탭 위에서 모든 탭을 함께 갱신)
+		with gr.Tabs(elem_id="admin-sections"):
+			# 문서 관리 (중요해서 첫 번째 탭: 업로드는 왼쪽, 보고서 목록은 오른쪽)
+			with gr.Tab("문서 관리", id="admin-docs"):
+				with gr.Column(variant="panel"):
+					gr.Markdown("### 문서 관리 · 보고서 업로드")
+					with gr.Row():
+						with gr.Column(scale=5, variant="panel"):
+							gr.Markdown("#### 보고서 업로드")
+							upload_file = gr.File(label="보고서 PDF", file_types=[".pdf"], file_count="multiple", type="filepath")
+							upload_btn = gr.Button("업로드", variant="primary")
+							upload_result = gr.Markdown()
+						with gr.Column(scale=7, variant="panel"):
+							gr.Markdown("#### 보고서 목록")
+							reports = _admin_table()
 
-		# 사용 현황 (표 3개는 카드로 한 줄에 나란히, 차트는 아래 카드에 넓게)
-		gr.Markdown("### 사용 현황")
-		with gr.Row(equal_height=True):
-			with gr.Column(variant="panel"):
-				gr.Markdown("#### 질문 TOP 10")
-				top_questions = _admin_table()
-			with gr.Column(variant="panel"):
-				gr.Markdown("#### 페르소나별 사용 비율")
-				persona_ratio = _admin_table()
-			with gr.Column(variant="panel"):
-				gr.Markdown("#### 처리 방식별 비율")
-				route_ratio = _admin_table()
-		with gr.Column(variant="panel"):
-			gr.Markdown("#### 일별 질문 수·평균 응답 시간")
-			daily_chart = gr.Image(label="일별 질문 수·평균 응답 시간", show_label=False, interactive=False, visible=False, height=480)
-			daily_chart_message = gr.Markdown()
+			# 사용 현황 (차트는 위 카드에 넓게, 표 3개는 그 아래 카드로 한 줄에 나란히)
+			with gr.Tab("사용 현황", id="admin-usage"):
+				gr.Markdown("### 사용 현황")
+				with gr.Column(variant="panel"):
+					gr.Markdown("#### 일별 질문 수·평균 응답 시간")
+					daily_chart = gr.Image(label="일별 질문 수·평균 응답 시간", show_label=False, interactive=False, visible=False, height=480)
+					daily_chart_message = gr.Markdown()
+				with gr.Row(equal_height=True):
+					with gr.Column(variant="panel"):
+						gr.Markdown("#### 질문 TOP 10")
+						# 긴 질문 때문에 횟수 칸이 밀려 안 보이지 않도록 질문 80%·횟수 20%로 고정
+						top_questions = _admin_table(column_widths=["80%", "20%"])
+					with gr.Column(variant="panel"):
+						gr.Markdown("#### 페르소나별 사용 비율")
+						persona_ratio = _admin_table()
+					with gr.Column(variant="panel"):
+						gr.Markdown("#### 처리 방식별 비율")
+						route_ratio = _admin_table()
 
-		# 답변 품질(왼쪽, 넓게)·성능 비용(오른쪽) 카드를 나란히
-		with gr.Row(equal_height=True):
-			with gr.Column(scale=7, variant="panel"):
-				gr.Markdown("### 답변 품질")
-				source_ratio = gr.Markdown(container=True, padding=True)
-				with gr.Row():
-					with gr.Column(scale=5):
-						gr.Markdown("#### 👍/👎 피드백 비율")
-						feedback_ratio = _admin_table()
-					with gr.Column(scale=7):
-						gr.Markdown("#### 근거 없는 질문 (보고서 보강 후보)")
-						no_source_questions = _admin_table()
-			with gr.Column(scale=5, variant="panel"):
-				gr.Markdown("### 성능·비용")
-				perf_cost = gr.Markdown(container=True, padding=True)
-				gr.Markdown("#### flow별 토큰·원화 비용")
-				usage_by_flow = _admin_table()
+			# 답변 품질
+			with gr.Tab("답변 품질", id="admin-quality"):
+				with gr.Column(variant="panel"):
+					gr.Markdown("### 답변 품질")
+					source_ratio = gr.Markdown(container=True, padding=True)
+					with gr.Row():
+						with gr.Column(scale=5):
+							gr.Markdown("#### 👍/👎 피드백 비율")
+							feedback_ratio = _admin_table()
+						with gr.Column(scale=7):
+							gr.Markdown("#### 근거 없는 질문 (보고서 보강 후보)")
+							no_source_questions = _admin_table()
 
-		# 운영 상태 (맨 아래에 넓게)
-		with gr.Column(variant="panel"):
-			gr.Markdown("#### 최근 에러 로그")
-			# 칸 너비: 시각·사용자는 좁게 고정, 질문 30%·에러 45% (Gradio는 px·%만 알아들음, 페이지 문구는 표 이름에 나옴)
-			# 한 줄 보기: 긴 질문·에러는 줄바꿈하지 않고 칸 밖으로 넘치는 글을 숨겨(wrap=False), 한 페이지 10건이 스크롤 없이 한 번에 보이게 함
-			recent_errors = _admin_table(show_label=True, label="1 / 1 페이지", column_widths=["180px", "110px", "30%", "45%"], wrap=False)
-			# 페이지 넘기기 (표 밑, ERROR_PAGE_SIZE개씩)
-			with gr.Row():
-				error_prev_btn = gr.Button("이전", variant="primary", size="sm")
-				error_next_btn = gr.Button("다음", variant="primary", size="sm")
+			# 성능·비용
+			with gr.Tab("성능·비용", id="admin-perf"):
+				with gr.Column(variant="panel"):
+					gr.Markdown("### 성능·비용")
+					perf_cost = gr.Markdown(container=True, padding=True)
+					gr.Markdown("#### flow별 토큰·원화 비용")
+					usage_by_flow = _admin_table()
+
+			# 운영 상태
+			with gr.Tab("운영 상태", id="admin-ops"):
+				with gr.Column(variant="panel"):
+					gr.Markdown("#### 최근 에러 로그")
+					# 칸 너비: 시각·사용자는 좁게 고정, 질문 30%·에러 45% (Gradio는 px·%만 알아들음, 페이지 문구는 표 이름에 나옴)
+					# 한 줄 보기: 긴 질문·에러는 줄바꿈하지 않고 칸 밖으로 넘치는 글을 숨겨(wrap=False), 한 페이지 10건이 스크롤 없이 한 번에 보이게 함
+					recent_errors = _admin_table(show_label=True, label="1 / 1 페이지", column_widths=["180px", "110px", "30%", "45%"], wrap=False)
+					# 페이지 넘기기 (표 밑, ERROR_PAGE_SIZE개씩)
+					with gr.Row():
+						error_prev_btn = gr.Button("이전", variant="primary", size="sm")
+						error_next_btn = gr.Button("다음", variant="primary", size="sm")
 
 	# 최근 에러 로그에서 지금 보고 있는 페이지 (전체 표·현재 페이지 번호)
 	error_page_state = gr.State({"table": "", "page": 1})
@@ -404,7 +415,7 @@ def on_refresh():
 	get_dashboard_data_v2() 결과(1차 + 2차 데이터)로 대시보드 컴포넌트를 갱신한다.
 
 	- 표(질문 TOP 10·페르소나 비율·처리 방식 비율·피드백 비율·근거 없는 질문·flow별 토큰·보고서 목록·최근 에러)는 마크다운 표를 gr.Dataframe 값으로 바꿔 보여 준다
-	- 자료 유무 응답 비율은 %로, 평균 응답 시간은 ms로, 원화 비용 합계는 원으로 보여 준다
+	- 자료 유무 응답 비율은 %로, 평균 응답 시간은 초(s)로, 원화 비용 합계는 원으로 보여 준다
 	- 일별 질문 수 차트
 	  - 차트가 있으면: 이미지 칸을 보이게 하고 차트를 넣고, 안내 문구는 지운다
 	  - 차트가 없으면(기록이 없음): 이미지 칸을 숨기고 '일별 질문 수: 표시할 데이터가 없습니다.'를 보여 준다
@@ -421,7 +432,9 @@ def on_refresh():
 
 	# 숫자는 단위를 붙여서 보여줌
 	source_ratio = f"'자료에 없습니다' 응답 비율: **{round(data.source_ratio * 100, 1)}%**"
-	perf_cost = f"평균 응답 시간: **{data.avg_response_ms} ms** / 원화 비용 합계: **{round(data.cost_krw, 2)}원**"
+	# 평균 응답 시간은 ms로 저장되어 있어 초(s)로 바꿔 보여 줌 (1 s = 1000 ms, 소수 둘째 자리까지)
+	avg_response_s = round(data.avg_response_ms / 1000, 2)
+	perf_cost = f"평균 응답 시간: **{avg_response_s} s** / 원화 비용 합계: **{round(data.cost_krw, 2)}원**"
 
 	# 일별 질문 수 차트 (없으면 안내 문구)
 	if data.daily_chart != None:
