@@ -15,6 +15,7 @@ import uuid
 import gradio as gr
 
 from hri.dao.dashboard_dao import (
+	select_avg_response_ms,
 	select_daily_counts,
 	select_feedback_ratio,
 	select_no_source_questions,
@@ -318,7 +319,7 @@ def get_dashboard_data() -> DashboardData:
 	순서
 	1. 질문 TOP 10을 [질문, 횟수] 표로 만든다
 	2. 자료 유무 응답 비율('자료에 없습니다' 비율)을 가져온다
-	3. select_perf_cost()의 일자별 평균 응답 시간을 날짜마다 한 번씩만 모아 평균을 낸다
+	3. select_avg_response_ms()로 전체 답변의 평균 응답 시간을 가져온다 (잡담·오류 제외)
 	4. select_perf_cost()의 토큰을 flow·모델별로 더하고, cost_korean_won()으로 flow별 원화 비용을 계산해
 	   [flow, 입력 토큰, 출력 토큰, 원화 비용] 표와 원화 비용 합계를 만든다
 	5. 보고서 목록을 [제목, 발행일, 청크 수] 표로 만든다
@@ -339,22 +340,12 @@ def get_dashboard_data() -> DashboardData:
 	# 2) 자료 유무 응답 비율
 	source_ratio = select_source_ratio()
 
-	# 3) 평균 응답 시간 (같은 날짜가 flow·모델 수만큼 반복되므로 날짜별로 한 번만 모음)
-	perf_rows = select_perf_cost()
-
-	day_avg = {}
-	for row in perf_rows:
-		if row["avg_response_ms"] != None:
-			day_avg[row["day"]] = row["avg_response_ms"]
-
-	avg_response_ms = 0.0
-	if len(day_avg) > 0:
-		total_ms = 0.0
-		for ms in day_avg.values():
-			total_ms = total_ms + ms
-		avg_response_ms = round(total_ms / len(day_avg), 1)
+	# 3) 평균 응답 시간 (전체 답변 기준, 잡담·오류 제외)
+	avg_response_ms = select_avg_response_ms()
 
 	# 4) flow별 토큰·원화 비용
+	perf_rows = select_perf_cost()
+
 	# flow → 모델 → 토큰 수 (같은 모델이 여러 날짜에 있으면 더함)
 	# 예) {"qa": {"gpt-5-mini-2025-08-07": {"input_tokens": 1200, "output_tokens": 300}}}
 	usage_by_flow = {}
