@@ -73,6 +73,28 @@ SUMMARY_TAB_STYLE = """
 	flex-direction: column;
 	flex-wrap: nowrap;
 	align-items: stretch;
+	gap: 0;
+}
+/* 보고서 줄 배경: 선택 여부와 상관없이 흰색·연한 회색 번갈아, 글자는 항상 기본 글자색
+   (Soft 테마는 background-fill-primary·secondary가 둘 다 neutral-50이라 직접 지정하고,
+    고른 줄의 파란 배경·흰 글자(checkbox-label-*-selected)도 여기서 덮어씀) */
+#summary-report-list [data-testid="checkbox-group"] > label {
+	border-radius: 0;
+	background: var(--block-background-fill);
+	color: var(--body-text-color);
+}
+#summary-report-list [data-testid="checkbox-group"] > label:nth-of-type(even) {
+	background: var(--neutral-100);
+}
+.dark #summary-report-list [data-testid="checkbox-group"] > label:nth-of-type(even) {
+	background: var(--neutral-700);
+}
+/* 요약·병합 버튼 줄: 위에 수평선을 두어 보고서 목록과 구분하고, 버튼 3개를 한 줄에 */
+#summary-actions {
+	flex-wrap: nowrap;
+	gap: 0.5rem;
+	padding-top: 0.75rem;
+	border-top: 1px solid var(--border-color-primary);
 }
 /* 보고서를 최대 개수(MAX_SELECTED_REPORTS, 5개)만큼 고르면 나머지 보고서는 흐리게 하고 누를 수 없게 함
    (Gradio가 고른 보고서 줄에 selected 클래스를 붙인다) */
@@ -205,9 +227,11 @@ def build_summary_tab():
                         report_dropdown = gr.CheckboxGroup(
                             label=f"보고서 선택 (최대 {MAX_SELECTED_REPORTS}개)", choices=[], elem_id="summary-report-list"
                         )
-                    three_lines_btn = gr.Button("3줄 요약하기", variant="primary", size="sm")
-                    sections_btn = gr.Button("섹션별 요약하기", variant="primary", size="sm")
-                    merge_btn = gr.Button("병합하기 (2개 이상 선택)", variant="primary", size="sm")
+                    # 요약·병합 버튼 3개를 한 줄에 (위쪽 수평선으로 보고서 목록과 구분, SUMMARY_TAB_STYLE)
+                    with gr.Row(elem_id="summary-actions"):
+                        three_lines_btn = gr.Button("3줄 요약하기", variant="primary", size="sm", min_width=0)
+                        sections_btn = gr.Button("섹션별 요약하기", variant="primary", size="sm", min_width=0)
+                        merge_btn = gr.Button("병합하기", variant="primary", size="sm", min_width=0)
                 # 오른쪽: 결과 (요약은 보고서마다 1페이지)
                 with gr.Column(scale=6, variant="panel", elem_id="summary-result-col"):
                     gr.Markdown("#### 결과")
