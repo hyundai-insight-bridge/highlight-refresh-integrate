@@ -154,7 +154,7 @@ def on_login(user_id: str, password: str):
 	4. 지표 비교 탭에서 고를 보고서 목록을 search_reports()로 만든다 ((제목, report_id) 쌍)
 	   (일반 사용자는 본인이 올린 보고서만, 관리자는 전체)
 	5. 로그인 탭은 숨기고, 역할(role)에 맞는 탭만 보이게 한다
-	- 일반 사용자("user"): 보고서·요약·질의응답 탭을 보이고 질의응답 탭으로 이동 (과거 대화 기록은 질의응답 탭 안에 있음)
+	- 일반 사용자("user"): 보고서·요약·질의응답 탭을 보이고 보고서 탭으로 이동 (과거 대화 기록은 질의응답 탭 안에 있음)
 	- 관리자("admin"): 관리자 탭만 보이고 관리자 탭으로 이동
 	(관리자는 대시보드만 쓰고, 내부 자료는 DB에 직접 넣는다)
 
@@ -230,7 +230,7 @@ def on_login(user_id: str, password: str):
 	else:
 		show_admin = False
 		show_user_tabs = True
-		first_tab = "chat"
+		first_tab = "report"
 
 	# 5) 로그인 탭은 숨기고 역할에 맞는 탭만 보여줌
 	return (
@@ -241,7 +241,7 @@ def on_login(user_id: str, password: str):
 		gr.update(visible=show_user_tabs),  # 질의응답 탭
 		gr.update(visible=show_admin),  # 관리자 탭
 		gr.update(visible=True),  # 로그아웃 버튼
-		gr.Tabs(selected=first_tab, visible=True),  # 탭 줄 보이기 + 첫 화면 탭으로 이동 (관리자: 관리자 탭, 일반 사용자: 질의응답 탭)
+		gr.Tabs(selected=first_tab, visible=True),  # 탭 줄 보이기 + 첫 화면 탭으로 이동 (관리자: 관리자 탭, 일반 사용자: 보고서 탭)
 		gr.update(choices=choices, value=[]),  # 비교할 보고서 목록
 		""  # 메시지 지우기
 	)
