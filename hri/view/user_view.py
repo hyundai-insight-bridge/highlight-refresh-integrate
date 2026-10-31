@@ -154,19 +154,19 @@ def on_login(user_id: str, password: str):
 	4. 지표 비교 탭에서 고를 보고서 목록을 search_reports()로 만든다 ((제목, report_id) 쌍)
 	   (일반 사용자는 본인이 올린 보고서만, 관리자는 전체)
 	5. 로그인 탭은 숨기고, 역할(role)에 맞는 탭만 보이게 한다
-	- 일반 사용자("user"): 보고서·요약·질의응답·내 기록 탭을 보이고 질의응답 탭으로 이동
+	- 일반 사용자("user"): 보고서·요약·질의응답 탭을 보이고 질의응답 탭으로 이동 (과거 대화 기록은 질의응답 탭 안에 있음)
 	- 관리자("admin"): 관리자 탭만 보이고 관리자 탭으로 이동
 	(관리자는 대시보드만 쓰고, 내부 자료는 DB에 직접 넣는다)
 
-	- 돌려주는 값 11개는 build_app()의 outputs 순서와 같아야 한다
-	  [state, 로그인 탭, 보고서 탭, 요약 탭, 질의응답 탭, 내 기록 탭, 관리자 탭,
+	- 돌려주는 값 10개는 build_app()의 outputs 순서와 같아야 한다
+	  [state, 로그인 탭, 보고서 탭, 요약 탭, 질의응답 탭, 관리자 탭,
 	   로그아웃 버튼, 탭 선택, 비교할 보고서 목록, 메시지]
 	- gr.update()는 "이 부품은 바꾸지 않음"이라는 뜻이다
 
 	입력: user_id (아이디), password (비밀번호)
-	출력: tuple (값 11개)
+	출력: tuple (값 10개)
 	"""
-	# 1) 빈칸이면 메시지만 보여줌 (나머지 10개는 그대로)
+	# 1) 빈칸이면 메시지만 보여줌 (나머지 9개는 그대로)
 	if not user_id or not password:
 		return (
 			gr.update(),  # state
@@ -174,7 +174,6 @@ def on_login(user_id: str, password: str):
 			gr.update(),  # 보고서 탭
 			gr.update(),  # 요약 탭
 			gr.update(),  # 질의응답 탭
-			gr.update(),  # 내 기록 탭
 			gr.update(),  # 관리자 탭
 			gr.update(),  # 로그아웃 버튼
 			gr.update(),  # 탭 선택
@@ -192,7 +191,6 @@ def on_login(user_id: str, password: str):
 			gr.update(),  # 보고서 탭
 			gr.update(),  # 요약 탭
 			gr.update(),  # 질의응답 탭
-			gr.update(),  # 내 기록 탭
 			gr.update(),  # 관리자 탭
 			gr.update(),  # 로그아웃 버튼
 			gr.update(),  # 탭 선택
@@ -241,7 +239,6 @@ def on_login(user_id: str, password: str):
 		gr.update(visible=show_user_tabs),  # 보고서 탭
 		gr.update(visible=show_user_tabs),  # 요약 탭
 		gr.update(visible=show_user_tabs),  # 질의응답 탭
-		gr.update(visible=show_user_tabs),  # 내 기록 탭
 		gr.update(visible=show_admin),  # 관리자 탭
 		gr.update(visible=True),  # 로그아웃 버튼
 		gr.Tabs(selected=first_tab, visible=True),  # 탭 줄 보이기 + 첫 화면 탭으로 이동 (관리자: 관리자 탭, 일반 사용자: 질의응답 탭)
@@ -292,12 +289,12 @@ def on_logout(state):
 	2. 로그인 탭만 보이게 하고 나머지 탭과 로그아웃 버튼은 숨긴다
 	3. 탭 줄을 숨겨서 로그인 칸만 보이게 하고, 비교할 보고서 목록도 비운다
 
-	- 돌려주는 값 10개는 build_app()의 outputs 순서와 같아야 한다
-	  [state, 로그인 탭, 보고서 탭, 요약 탭, 질의응답 탭, 내 기록 탭, 관리자 탭,
+	- 돌려주는 값 9개는 build_app()의 outputs 순서와 같아야 한다
+	  [state, 로그인 탭, 보고서 탭, 요약 탭, 질의응답 탭, 관리자 탭,
 	   로그아웃 버튼, 탭 선택, 비교할 보고서 목록]
 
 	입력: state (gr.State에 들어 있는 딕셔너리)
-	출력: tuple (값 10개)
+	출력: tuple (값 9개)
 	"""
 	# 1) 사용자 정보 지우고 session_id 새로 만들기
 	state["user"] = None
@@ -312,7 +309,6 @@ def on_logout(state):
 		gr.update(visible=False),  # 보고서 탭
 		gr.update(visible=False),  # 요약 탭
 		gr.update(visible=False),  # 질의응답 탭
-		gr.update(visible=False),  # 내 기록 탭
 		gr.update(visible=False),  # 관리자 탭
 		gr.update(visible=False),  # 로그아웃 버튼
 		gr.Tabs(visible=False),  # 탭 줄 숨기기 (로그인 칸만 보임)

@@ -1,12 +1,12 @@
-"""내 기록 화면 · build_history_tab, on_restore (임세준)
+"""과거 대화 기록 화면 · build_history_panel, on_restore (임세준)
 
 로그인한 사용자가 지난 질문 기록을 대화(session)별로 보고,
-고른 대화를 질의응답 탭에서 이어서 질문할 수 있게 하는 화면.
-- build_history_tab(): 기록 표(gr.Markdown)·대화 선택(gr.Dropdown)·'대화 이어가기' 버튼 배치
+고른 대화를 질의응답 탭에서 이어서 질문할 수 있게 하는 화면. (질의응답 탭 안에서 채팅 칸 자리에 보인다)
+- build_history_panel(): 기록 표(gr.Markdown)·대화 선택(gr.Dropdown)·'대화 이어가기'·'채팅으로 돌아가기' 버튼 배치
 - on_restore(): 고른 대화를 질의응답 탭 Chatbot에 채우고 state의 session_id를 바꾼다
 - 버튼 연결은 state·질의응답 탭 Chatbot이 필요해서 app.py의 build_app()에서 한다
 - 그래서 build_app()에서 쓸 화면 부품을 history_components에 담아 둔다
-- on_load_history(): 내 기록 탭을 열 때 get_history()로 기록 표·대화 선택 목록을 채운다
+- on_load_history(): 과거 대화 기록 버튼을 누를 때 get_history()로 기록 표·대화 선택 목록을 채운다
 - on_prev_page() · on_next_page(): 기록 표를 이전·다음 페이지로 넘긴다 (PAGE_SIZE개씩)
 """
 import math
@@ -92,21 +92,23 @@ def _make_page(user_id, table_rows, page):
 	return text, {"user_id": user_id, "rows": table_rows, "page": page}
 
 
-def build_history_tab():
+def build_history_panel():
 	"""
-	내 기록 화면 만들기
+	과거 대화 기록 화면 만들기 (질의응답 탭 안, 채팅 칸 자리에 들어감)
 
 	세션별 질문 기록을 table_to_markdown()으로 그린 gr.Markdown과
-	세션 선택 gr.Dropdown·'대화 이어가기' gr.Button을 배치한다.
+	세션 선택 gr.Dropdown·'대화 이어가기' gr.Button·'채팅으로 돌아가기' gr.Button을 배치한다.
 
+	- build_chat_tab()이 채팅 칸 옆에 숨겨 둔 채(visible=False) 부르고,
+	  소스 칸 맨 아래 '과거 대화 기록' 버튼을 누르면 채팅 칸 대신 이 칸이 보인다
 	- 기록 표는 [마지막 시각, 첫 질문, 질문 수] 머리글로 그린다
-	- 탭은 로그인 전에는 숨겨 둔다 (visible=False, 로그인하면 on_login이 보이게 함)
-	- '대화 이어가기' 버튼 연결은 build_app()에서 하므로 부품을 history_components에 담아 둔다
+	- 버튼 연결은 build_app()에서 하므로 부품을 history_components에 담아 둔다
 
 	입력: 없음
-	출력: gr.Tab (내 기록 탭)
+	출력: gr.Column (과거 대화 기록 칸)
 	"""
-	with gr.Tab("내 기록", id="history", visible=False) as history_tab:
+	with gr.Column(scale=6, variant="panel", visible=False, elem_id="chat-history-col") as history_col:
+		gr.Markdown("#### 과거 대화 기록")
 		# 이어갈 대화 고르기: 드롭다운과 이어가기 버튼을 한 줄에 (한 div)
 		with gr.Row(elem_id="history-pick"):
 			session_dropdown = gr.Dropdown(label="대화 선택", choices=[], scale=4)
@@ -120,18 +122,23 @@ def build_history_tab():
 			prev_btn = gr.Button("이전", size="sm")
 			next_btn = gr.Button("다음", size="sm")
 
+		# 기록을 닫고 채팅 칸으로 돌아가기
+		back_btn = gr.Button("채팅으로 돌아가기", size="sm")
+
 	# 지금 보고 있는 페이지 (전체 행·현재 페이지 번호·기록 주인)
 	page_state = gr.State(_empty_page())
 
 	# build_app()에서 쓸 부품 저장
+	history_components["column"] = history_col
 	history_components["table"] = history_table
 	history_components["session_dropdown"] = session_dropdown
 	history_components["restore_btn"] = restore_btn
 	history_components["prev_btn"] = prev_btn
 	history_components["next_btn"] = next_btn
+	history_components["back_btn"] = back_btn
 	history_components["page_state"] = page_state
 
-	return history_tab
+	return history_col
 
 
 @safe_call
@@ -167,7 +174,7 @@ def on_restore(session_id: str, state):
 @safe_call
 def on_load_history(state):
 	"""
-	내 기록 탭 열었을 때
+	과거 대화 기록 버튼 눌렀을 때 (질의응답 탭 소스 칸 맨 아래)
 
 	get_history()로 로그인한 사람의 질문 기록을 가져와
 	대화(session_id)별로 묶어서 기록 표와 대화 선택 목록을 채운다.
