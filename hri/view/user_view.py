@@ -36,6 +36,10 @@ LOGIN_BOX_STYLE = """
 	padding: 0 1rem;
 	text-align: left;
 }
+#login-title,
+#login-title * {
+	text-align: center;
+}
 #login-box * {
 	scrollbar-width: none;
 }
@@ -65,7 +69,7 @@ def build_login_tab():
 	with gr.Column(elem_id="login-wrap") as login_tab:
 		with gr.Column(elem_id="login-box"):
 			# 칸 맨 위에 서비스 이름을 글자로 보여 준다 (회원가입 때는 "## 회원가입"으로 바뀜)
-			title = gr.Markdown("# HRI Insight Bridge")
+			title = gr.Markdown("# HRI Insight Bridge", elem_id="login-title")
 
 			user_id = gr.Textbox(label="아이디", placeholder="아이디를 입력하세요")
 			password = gr.Textbox(label="비밀번호", type="password", placeholder="비밀번호를 입력하세요")
