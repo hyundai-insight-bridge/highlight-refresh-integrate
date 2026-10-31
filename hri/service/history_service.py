@@ -83,6 +83,7 @@ def restore_session(session_id: str, user_id: str) -> list[dict]:
 	2. 기록 한 줄마다
 	   - 질문은 HumanMessage, 답변은 AIMessage로 바꿔 messages에 담는다 (그래프 기억용)
 	   - {'role': 'user'/'assistant', 'content': ...}로 바꿔 chat_history에 담는다 (gr.Chatbot 표시용)
+	   - 화면 표시용 질문은 * _ 앞에 \를 붙여, 가린 글자가 마크다운 기울임으로 바뀌지 않게 한다
 	3. get_qa_graph().get_state()로 그 대화(thread)에 messages가 이미 있는지 확인한다
 	   - 이미 있으면 건너뛴다 (같은 대화가 두 번 쌓이지 않게)
 	   - 없으면 qa_graph.update_state({'configurable': {'thread_id': session_id}}, {'messages': [...]})로
@@ -109,7 +110,9 @@ def restore_session(session_id: str, user_id: str) -> list[dict]:
 		messages.append(HumanMessage(content=log.question))
 		messages.append(AIMessage(content=log.answer))
 
-		chat_history.append({"role": "user", "content": log.question})
+		# 가린 글자(홍*동, use***)의 * _가 마크다운 기울임으로 바뀌지 않게 앞에 \를 붙임 (화면 표시용만)
+		shown_question = log.question.replace("*", "\\*").replace("_", "\\_")
+		chat_history.append({"role": "user", "content": shown_question})
 		chat_history.append({"role": "assistant", "content": log.answer})
 
 	# 3) 그래프의 대화 기억(체크포인터)에 없을 때만 다시 채우기
