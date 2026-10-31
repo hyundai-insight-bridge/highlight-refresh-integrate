@@ -6,7 +6,10 @@
 - on_refresh(): 새로고침 버튼을 누르면 get_dashboard_data_v2() 결과로 화면을 갱신 (3.7.9, 2차 화면 3.7.12)
 - plot_daily_counts(): 일별 질문 수·평균 응답 시간 선 그래프를 PNG로 저장 (3.7.11)
 - get_dashboard_data_v2(): 1차 데이터에 일별 추이 차트·페르소나 비율·처리 방식 비율·피드백 비율·근거 없는 질문 목록을 더해 가공 (3.7.11)
+- on_prev_error_page() · on_next_error_page(): 최근 에러 로그 표를 이전·다음 페이지로 넘긴다 (ERROR_PAGE_SIZE개씩)
 """
+import math
+import re
 import uuid
 
 import gradio as gr
@@ -32,23 +35,120 @@ from hri.util.logger import safe_call
 # 기록이 없는 표 대신 보여 줄 문구
 NO_STATS_MESSAGE = "기록된 통계가 없습니다."
 
+# 최근 에러 로그 한 페이지에 보여 줄 개수
+ERROR_PAGE_SIZE = 10
+
 # app.py가 관리자 탭의 업로드 버튼 click을 연결할 때 쓰는 컴포넌트 모음 (upload_components와 같은 방식)
 admin_components = {}
 
+# 관리자 탭 표 오른쪽에 생기는 작은 스크롤바(위·아래 화살표)를 숨기는 스타일 (스크롤은 그대로 됨)
+# - Gradio의 Markdown 칸은 내부에서 overflow: auto로 고정되어 있고 이를 끄는 Python 옵션이 없어서 CSS로만 숨길 수 있음
+# - app.py에서 head로 다른 스타일과 함께 넣는다
+ADMIN_SCROLLBAR_STYLE = """
+<style>
+#admin-tab * {
+	scrollbar-width: none;
+}
+#admin-tab *::-webkit-scrollbar {
+	display: none;
+}
+</style>
+"""
 
-def _table_or_message(table: str | None) -> str:
+
+def _markdown_cells(line: str) -> list[str]:
+	"""
+	마크다운 표 한 줄을 칸 목록으로 나누기
+
+	'| a | b |' → ['a', 'b']
+	- table_to_markdown()이 글자 '|'를 '\\|'로 바꿔 두었으므로, '\\|'는 칸 나눔으로 보지 않고 '|' 글자로 되돌린다
+
+	입력: line (마크다운 표 한 줄)
+	출력: list[str] (칸 글 목록)
+	"""
+	cells = re.split(r"(?<!\\)\|", line.strip())[1:-1]
+	return [cell.strip().replace("\\|", "|") for cell in cells]
+
+
+def _table_frame(lines: list[str]) -> dict:
+	"""
+	마크다운 표 줄들을 gr.Dataframe 값으로 바꾸기
+
+	첫 줄은 머리글, 둘째 줄(|---|)은 구분선이라 건너뛰고, 나머지는 한 줄에 기록 하나씩 넣는다.
+
+	입력: lines (마크다운 표 줄 목록, 머리글·구분선 포함)
+	출력: dict ({"headers": 머리글 칸 목록, "data": 기록 칸 목록의 목록})
+	"""
+	headers = _markdown_cells(lines[0])
+	data = [_markdown_cells(line) for line in lines[2:]]
+	return {"headers": headers, "data": data}
+
+
+def _table_or_message(table: str | None) -> dict:
 	"""
 	표에 기록이 없으면 안내 문구로 바꾸기
 
-	table_to_markdown()이 만든 표가 머리글·구분선 두 줄뿐이면(기록 없음) '기록된 통계가 없습니다.'를,
-	기록이 있으면 표를 그대로 돌려준다.
+	table_to_markdown()이 만든 표가 머리글·구분선 두 줄뿐이면(기록 없음) '기록된 통계가 없습니다.' 한 칸짜리 표를,
+	기록이 있으면 표를 gr.Dataframe 값으로 바꿔 돌려준다.
 
 	입력: table (마크다운 표)
-	출력: str (표 또는 안내 문구)
+	출력: dict (gr.Dataframe 값 {"headers": ..., "data": ...})
 	"""
 	if table == None or table.count("\n") <= 1:
-		return NO_STATS_MESSAGE
-	return table
+		return {"headers": ["안내"], "data": [[NO_STATS_MESSAGE]]}
+	return _table_frame(table.split("\n"))
+
+
+def _error_page(table: str | None, page: int):
+	"""
+	최근 에러 로그 표에서 한 페이지만 잘라 보여 주기
+
+	table_to_markdown()이 만든 표는 머리글·구분선 두 줄 다음에 한 줄에 기록 하나씩이라,
+	본문 줄을 ERROR_PAGE_SIZE개씩 잘라 머리글을 붙이고, 표 이름(label)에 'n / 전체 페이지'를 적는다.
+
+	- page가 범위를 넘으면 1 또는 마지막 페이지로 맞춘다
+	- 기록이 없으면 '기록된 통계가 없습니다.'
+
+	입력: table (최근 에러 로그 전체 마크다운 표), page (보고 싶은 페이지 번호)
+	출력: (gr.update 화면에 보여 줄 표·페이지 문구, dict 페이지 상태 {"table": 전체 표, "page": 현재 페이지})
+	"""
+	if table == None:
+		table = ""
+	lines = table.split("\n")
+	body = lines[2:]
+
+	if len(body) == 0:
+		return gr.update(value=_table_or_message(table), label="0 / 0 페이지 (총 0건)"), {"table": table, "page": 1}
+
+	total_pages = math.ceil(len(body) / ERROR_PAGE_SIZE)
+	page = min(max(page, 1), total_pages)
+
+	start = (page - 1) * ERROR_PAGE_SIZE
+	frame = _table_frame(lines[:2] + body[start:start + ERROR_PAGE_SIZE])
+	label = f"{page} / {total_pages} 페이지 (총 {len(body)}건)"
+	return gr.update(value=frame, label=label), {"table": table, "page": page}
+
+
+@safe_call
+def on_prev_error_page(page_state):
+	"""
+	최근 에러 로그 '이전' 버튼 눌렀을 때 (한 페이지 앞으로)
+
+	입력: page_state (gr.State, {"table": 전체 표, "page": 현재 페이지})
+	출력: (gr.update 표·페이지 문구, dict 페이지 상태)
+	"""
+	return _error_page(page_state["table"], page_state["page"] - 1)
+
+
+@safe_call
+def on_next_error_page(page_state):
+	"""
+	최근 에러 로그 '다음' 버튼 눌렀을 때 (한 페이지 뒤로)
+
+	입력: page_state (gr.State, {"table": 전체 표, "page": 현재 페이지})
+	출력: (gr.update 표·페이지 문구, dict 페이지 상태)
+	"""
+	return _error_page(page_state["table"], page_state["page"] + 1)
 
 def get_dashboard_data() -> DashboardData:
 	"""
@@ -154,82 +254,122 @@ def get_dashboard_data() -> DashboardData:
 	)
 
 
+def _admin_table(**options) -> gr.Dataframe:
+	"""
+	관리자 탭 표(gr.Dataframe) 만들기
+
+	표마다 같은 모양으로 만든다.
+	- 보기 전용 (interactive=False), 표 이름은 위 작은 제목(####)이 있어서 숨김 (show_label=False)
+	- 긴 글(질문·에러)은 칸 안에서 줄을 바꿔 다 보이게 함 (wrap=True)
+	- options로 넘긴 값(표 이름·칸 너비 등)은 위 기본값보다 우선한다
+
+	입력: options (gr.Dataframe에 더 넘길 옵션)
+	출력: gr.Dataframe
+	"""
+	settings = {"interactive": False, "show_label": False, "wrap": True}
+	settings.update(options)
+	return gr.Dataframe(**settings)
+
+
 def build_admin_tab():
 	"""
 	관리자 대시보드 화면 만들기
 
 	사용 현황·답변 품질·성능 비용·문서 관리·운영 상태를
-	gr.Markdown(표)·gr.Image(차트)로 구성하고 새로고침 gr.Button을 둔다.
+	gr.Dataframe(표)·gr.Image(차트)로 구성하고 새로고침 gr.Button을 둔다.
 
 	구역별 화면 (1차 + 2차)
 	- 사용 현황: 질문 TOP 10 표, 일별 질문 수 추이 차트, 페르소나별 사용 비율 표, 처리 방식(보고서 근거 답변·자료에 없음·잡담·오류)별 비율 표
 	- 답변 품질: '자료에 없습니다' 응답 비율, 👍/👎 피드백 비율 표, 근거 없는 질문 목록 표
 	- 성능·비용: 평균 응답 시간·원화 비용 합계, flow별 토큰 표
 	- 문서 관리: 보고서 목록 표
-	- 운영 상태: 최근 에러 로그 표
+	- 운영 상태: 최근 에러 로그 표 (ERROR_PAGE_SIZE개씩, 표 밑 이전·다음 버튼으로 페이지 넘김)
 
 	- 관리자 계정에만 보이도록 처음에는 숨겨 둔다 (visible=False, 관리자가 로그인하면 on_login이 보이게 함)
 	- 새로고침 버튼은 state가 필요 없어서 여기서 바로 on_refresh()와 연결한다
 	- 새로고침 버튼은 화면 오른쪽 위에 둔다
-	- 표마다 작은 제목(####)을 붙이고, 같은 구역의 표는 gr.Row·gr.Column으로 나란히 둔다 (차트는 높이 480으로 넓게)
+	- 화면 배치 (위에서 아래 순서)
+	  1. 문서 관리(보고서 업로드·보고서 목록): 중요해서 맨 위에 둔다
+	  2. 사용 현황: 표 3개 카드를 한 줄에, 일별 차트 카드는 그 아래에 넓게
+	  3. 답변 품질(왼쪽)·성능 비용(오른쪽) 카드를 나란히
+	  4. 운영 상태(최근 에러 로그)는 맨 아래에 넓게
+	- 구역마다 카드(gr.Column(variant="panel"))로 묶고, 표마다 작은 제목(####)을 붙인다 (CSS 없이 Gradio 옵션만 사용, 차트는 높이 480으로 넓게)
+	- 표는 gr.Dataframe으로 보여 준다 (옅은 선·머리글 배경은 Dataframe 기본 모양, 모양은 _admin_table()에서 한 번에 정함)
+	- 최근 에러 로그 표는 column_widths로 시각·사용자 칸을 좁게 고정해 줄바꿈되지 않게 하고, 에러 칸을 넓힌다
+	- 자료 유무 응답 비율·평균 응답 시간·원화 비용은 테두리 칸(gr.Markdown(container=True))으로 강조해 보여 준다
 	- 관리자 탭이 선택되면(관리자가 로그인하면 on_login이 이 탭을 선택함) 새로고침을 누르지 않아도 on_refresh()로 바로 채운다
 	- 차트(gr.Image)와 차트 안내 문구는 로그인 전에는 보이지 않는다 (관리자 탭이 선택되어 갱신되면 차트가 있을 때는 차트를, 없을 때는 '일별 질문 수: 표시할 데이터가 없습니다.'를 보여 줌)
 
 	입력: 없음
 	출력: gr.Tab (관리자 탭)
 	"""
-	with gr.Tab("관리자", id="admin", visible=False) as admin_tab:
-		# 오른쪽 위 새로고침 버튼 (제목은 왼쪽, 버튼은 오른쪽 끝)
+	with gr.Tab("관리자", id="admin", visible=False, elem_id="admin-tab") as admin_tab:
+		# 머리글: 제목·설명은 왼쪽, 새로고침 버튼은 오른쪽 끝 (버튼은 늘어나지 않게 scale=0, 너비 120)
 		with gr.Row(equal_height=True):
 			gr.Markdown("## 관리자 대시보드")
 			refresh_btn = gr.Button("새로고침", variant="primary", scale=0, min_width=120)
 
-		# 사용 현황 (표 3개는 한 줄에 나란히, 차트는 아래에 넓게)
+		# 문서 관리 (중요해서 맨 위에: 업로드는 왼쪽, 보고서 목록은 오른쪽)
+		with gr.Column(variant="panel"):
+			gr.Markdown("### 문서 관리 · 보고서 업로드")
+			with gr.Row():
+				with gr.Column(scale=5, variant="panel"):
+					gr.Markdown("#### 보고서 업로드")
+					upload_file = gr.File(label="보고서 PDF", file_types=[".pdf"], file_count="multiple", type="filepath")
+					upload_btn = gr.Button("업로드", variant="primary")
+					upload_result = gr.Markdown()
+				with gr.Column(scale=7, variant="panel"):
+					gr.Markdown("#### 보고서 목록")
+					reports = _admin_table()
+
+		# 사용 현황 (표 3개는 카드로 한 줄에 나란히, 차트는 아래 카드에 넓게)
 		gr.Markdown("### 사용 현황")
-		with gr.Row():
-			with gr.Column():
+		with gr.Row(equal_height=True):
+			with gr.Column(variant="panel"):
 				gr.Markdown("#### 질문 TOP 10")
-				top_questions = gr.Markdown()
-			with gr.Column():
+				top_questions = _admin_table()
+			with gr.Column(variant="panel"):
 				gr.Markdown("#### 페르소나별 사용 비율")
-				persona_ratio = gr.Markdown()
-			with gr.Column():
+				persona_ratio = _admin_table()
+			with gr.Column(variant="panel"):
 				gr.Markdown("#### 처리 방식별 비율")
-				route_ratio = gr.Markdown()
-		daily_chart = gr.Image(label="일별 질문 수·평균 응답 시간", interactive=False, visible=False, height=480)
-		daily_chart_message = gr.Markdown()
+				route_ratio = _admin_table()
+		with gr.Column(variant="panel"):
+			gr.Markdown("#### 일별 질문 수·평균 응답 시간")
+			daily_chart = gr.Image(label="일별 질문 수·평균 응답 시간", show_label=False, interactive=False, visible=False, height=480)
+			daily_chart_message = gr.Markdown()
 
-		# 답변 품질 (응답 비율은 위에, 표 2개는 나란히)
-		gr.Markdown("### 답변 품질")
-		source_ratio = gr.Markdown()
-		with gr.Row():
-			with gr.Column():
-				gr.Markdown("#### 👍/👎 피드백 비율")
-				feedback_ratio = gr.Markdown()
-			with gr.Column():
-				gr.Markdown("#### 근거 없는 질문 (보고서 보강 후보)")
-				no_source_questions = gr.Markdown()
+		# 답변 품질(왼쪽, 넓게)·성능 비용(오른쪽) 카드를 나란히
+		with gr.Row(equal_height=True):
+			with gr.Column(scale=7, variant="panel"):
+				gr.Markdown("### 답변 품질")
+				source_ratio = gr.Markdown(container=True, padding=True)
+				with gr.Row():
+					with gr.Column(scale=5):
+						gr.Markdown("#### 👍/👎 피드백 비율")
+						feedback_ratio = _admin_table()
+					with gr.Column(scale=7):
+						gr.Markdown("#### 근거 없는 질문 (보고서 보강 후보)")
+						no_source_questions = _admin_table()
+			with gr.Column(scale=5, variant="panel"):
+				gr.Markdown("### 성능·비용")
+				perf_cost = gr.Markdown(container=True, padding=True)
+				gr.Markdown("#### flow별 토큰·원화 비용")
+				usage_by_flow = _admin_table()
 
-		# 성능·비용
-		gr.Markdown("### 성능·비용")
-		perf_cost = gr.Markdown()
-		gr.Markdown("#### flow별 토큰·원화 비용")
-		usage_by_flow = gr.Markdown()
+		# 운영 상태 (맨 아래에 넓게)
+		with gr.Column(variant="panel"):
+			gr.Markdown("#### 최근 에러 로그")
+			# 칸 너비: 시각·사용자는 좁게 고정, 질문 30%·에러 45% (Gradio는 px·%만 알아들음, 페이지 문구는 표 이름에 나옴)
+			# 한 줄 보기: 긴 질문·에러는 줄바꿈하지 않고 칸 밖으로 넘치는 글을 숨겨(wrap=False), 한 페이지 10건이 스크롤 없이 한 번에 보이게 함
+			recent_errors = _admin_table(show_label=True, label="1 / 1 페이지", column_widths=["180px", "110px", "30%", "45%"], wrap=False)
+			# 페이지 넘기기 (표 밑, ERROR_PAGE_SIZE개씩)
+			with gr.Row():
+				error_prev_btn = gr.Button("이전", variant="primary", size="sm")
+				error_next_btn = gr.Button("다음", variant="primary", size="sm")
 
-		# 문서 관리·운영 상태 (나란히)
-		with gr.Row():
-			with gr.Column():
-				gr.Markdown("### 문서 관리")
-				gr.Markdown("#### 보고서 업로드")
-				upload_file = gr.File(label="보고서 PDF", file_types=[".pdf"], file_count="multiple", type="filepath")
-				upload_btn = gr.Button("업로드", variant="primary")
-				upload_result = gr.Markdown()
-				gr.Markdown("#### 보고서 목록")
-				reports = gr.Markdown()
-			with gr.Column():
-				gr.Markdown("### 운영 상태")
-				gr.Markdown("#### 최근 에러 로그")
-				recent_errors = gr.Markdown()
+	# 최근 에러 로그에서 지금 보고 있는 페이지 (전체 표·현재 페이지 번호)
+	error_page_state = gr.State({"table": "", "page": 1})
 
 	# on_refresh()가 돌려주는 순서와 같게, 화면 위에서 아래 순서
 	outputs = [
@@ -237,8 +377,12 @@ def build_admin_tab():
 		source_ratio, feedback_ratio, no_source_questions,
 		perf_cost, usage_by_flow,
 		reports,
-		recent_errors
+		recent_errors, error_page_state
 	]
+
+	# 최근 에러 로그 이전·다음 페이지
+	error_prev_btn.click(fn=on_prev_error_page, inputs=[error_page_state], outputs=[recent_errors, error_page_state])
+	error_next_btn.click(fn=on_next_error_page, inputs=[error_page_state], outputs=[recent_errors, error_page_state])
 
 	# 새로고침 버튼 누르면 대시보드 갱신
 	refresh_btn.click(fn=on_refresh, outputs=outputs)
@@ -259,18 +403,19 @@ def on_refresh():
 
 	get_dashboard_data_v2() 결과(1차 + 2차 데이터)로 대시보드 컴포넌트를 갱신한다.
 
-	- 표(질문 TOP 10·페르소나 비율·처리 방식 비율·피드백 비율·근거 없는 질문·flow별 토큰·보고서 목록·최근 에러)는 마크다운 표 그대로 보여 준다
+	- 표(질문 TOP 10·페르소나 비율·처리 방식 비율·피드백 비율·근거 없는 질문·flow별 토큰·보고서 목록·최근 에러)는 마크다운 표를 gr.Dataframe 값으로 바꿔 보여 준다
 	- 자료 유무 응답 비율은 %로, 평균 응답 시간은 ms로, 원화 비용 합계는 원으로 보여 준다
 	- 일별 질문 수 차트
 	  - 차트가 있으면: 이미지 칸을 보이게 하고 차트를 넣고, 안내 문구는 지운다
 	  - 차트가 없으면(기록이 없음): 이미지 칸을 숨기고 '일별 질문 수: 표시할 데이터가 없습니다.'를 보여 준다
-	  - 돌려주는 값 12개는 build_admin_tab()의 outputs 순서와 같아야 한다
+	- 최근 에러 로그는 첫 페이지(ERROR_PAGE_SIZE개)만 보여 주고, 전체 표는 페이지 상태에 담아 이전·다음 버튼이 쓴다
+	  - 돌려주는 값 13개는 build_admin_tab()의 outputs 순서와 같아야 한다
 	  [질문 TOP 10, 일별 차트, 차트 안내 문구, 페르소나 비율, 처리 방식 비율,
 	   자료 유무 비율, 피드백 비율, 근거 없는 질문,
-	   응답 시간·원화 비용, flow별 토큰, 보고서 목록, 최근 에러]
+	   응답 시간·원화 비용, flow별 토큰, 보고서 목록, 최근 에러, 최근 에러 페이지 상태]
 
 	입력: 없음
-	출력: tuple (값 12개)
+	출력: tuple (값 13개)
 	"""
 	data = get_dashboard_data_v2()
 
@@ -298,7 +443,7 @@ def on_refresh():
 		perf_cost,
 		_table_or_message(data.usage_by_flow),
 		_table_or_message(data.reports),
-		_table_or_message(data.recent_errors)
+		*_error_page(data.recent_errors, 1)
 	)
 
 
@@ -306,14 +451,15 @@ def plot_daily_counts(rows: list[dict]) -> str:
 	"""
 	일별 추이 차트 그리기
 
-	matplotlib 선 그래프로 일별 질문 수와 평균 응답 시간을 위아래 두 그래프로 나눠 그려 PNG 한 장으로 저장한다.
+	matplotlib 막대 그래프로 일별 질문 수와 평균 응답 시간을 위아래 두 그래프로 나눠 그려 PNG 한 장으로 저장한다.
 
 	순서
 	1. rows를 날짜(가로축)·질문 수·평균 응답 시간 리스트로 나눈다
-	   (평균 응답 시간이 None인 날은 float("nan")으로 바꿔 그 날만 선을 끊어서 그린다)
+	   (평균 응답 시간이 None인 날은 float("nan")으로 바꿔 그 날만 막대를 그리지 않는다)
 	2. 한글 글꼴을 정한다 (장유빈 님 _use_korean_font() 재사용, 못 찾으면 기본 글꼴)
-	3. 위 그래프에 질문 수(건), 아래 그래프에 평균 응답 시간(ms)을 선으로 그린다
-	   (한 그래프에 두 선을 그리면 날짜가 적을 때 선이 겹쳐 보여서 나눔, 가로축 날짜는 두 그래프가 함께 씀)
+	3. 위 그래프에 질문 수(건), 아래 그래프에 평균 응답 시간(ms)을 막대로 그린다
+	   (두 값은 단위가 달라서 그래프를 나눔, 가로축 날짜는 두 그래프가 함께 씀)
+	   (막대 위에 값을 적고, 값이 없는 날은 적지 않음)
 		(질문 수는 건수라서 세로축 눈금을 정수로만 표시)
 	4. data/plots/에 daily_uuid.png로 저장하고 그림을 닫는다 (지표 비교 차트와 같은 폴더)
 
@@ -347,15 +493,27 @@ def plot_daily_counts(rows: list[dict]) -> str:
 		plt.rcParams["font.family"] = font
 	plt.rcParams["axes.unicode_minus"] = False
 
-	# 3) 선 그래프 그리기 (위: 질문 수, 아래: 평균 응답 시간, 가로축 날짜는 함께 씀)
+	# 3) 막대 그래프 그리기 (위: 질문 수, 아래: 평균 응답 시간, 가로축 날짜는 함께 씀)
 	fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 6), sharex=True, layout="constrained")
 
-	ax1.plot(days, counts, marker="o", color="C0")
+	bars1 = ax1.bar(days, counts, color="C0", width=0.25)
+	ax1.bar_label(bars1, padding=2)
+	ax1.margins(y=0.15)
+	# 날짜가 적으면 막대가 가로축을 꽉 채워 굵어 보여서, 양옆에 여백을 둬 얇게 보이게 함 (아래 그래프도 같은 가로축)
+	ax1.set_xlim(-1, len(days))
 	ax1.set_title("일별 질문 수")
 	ax1.set_ylabel("질문 수 (건)")
 	ax1.yaxis.set_major_locator(MaxNLocator(integer=True))
 
-	ax2.plot(days, avg_ms, marker="s", color="C1")
+	bars2 = ax2.bar(days, avg_ms, color="C1", width=0.25)
+	ms_labels = []
+	for ms in avg_ms:
+		if ms != ms:
+			ms_labels.append("")
+		else:
+			ms_labels.append(f"{round(ms)}")
+	ax2.bar_label(bars2, labels=ms_labels, padding=2)
+	ax2.margins(y=0.15)
 	ax2.set_title("일별 평균 응답 시간")
 	ax2.set_ylabel("평균 응답 시간 (ms)")
 	ax2.set_xlabel("날짜")

@@ -16,7 +16,7 @@ from hri.view.summary_view import build_summary_tab, on_summarize, on_request, s
 from hri.view.chat_view import build_chat_tab, chat_components, connect_chat_events, refresh_report_choices, CHAT_TITLE_STYLE
 from hri.view.indicator_view import on_compare
 from hri.view.history_view import build_history_tab, history_components, on_load_history, on_restore, on_prev_page, on_next_page, HISTORY_TABLE_STYLE
-from hri.view.admin_view import build_admin_tab, admin_components, on_refresh
+from hri.view.admin_view import build_admin_tab, admin_components, on_refresh, ADMIN_SCROLLBAR_STYLE
 
 
 # 화면 전체 테마 (UI 레퍼런스: 옅은 회색 배경·파란 강조색·둥근 모서리, CSS 없이 Gradio 테마 옵션만 사용)
@@ -354,4 +354,4 @@ def main():
 	# 화면 띄우기
 	demo = build_app()
 	# 스타일은 head로 한 번에 넣는다 (화면 안에 빈 HTML 칸을 만들면 위쪽 여백이 생겨서)
-	demo.launch(server_port=7860, theme=APP_THEME, footer_links=[], head=LOGIN_BOX_STYLE + HISTORY_TABLE_STYLE + LOGOUT_STYLE + CHAT_TITLE_STYLE)
+	demo.launch(server_port=7860, theme=APP_THEME, footer_links=[], head=LOGIN_BOX_STYLE + HISTORY_TABLE_STYLE + LOGOUT_STYLE + CHAT_TITLE_STYLE + ADMIN_SCROLLBAR_STYLE)
