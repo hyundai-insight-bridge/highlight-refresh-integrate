@@ -1,27 +1,18 @@
 """보고서 업로드 처리 · upload_report (김희진) / validate_pdf (엄정현)"""
 
 # 엄정현 validate_pdf() 추가.
-
-import logging
 import os
-from collections.abc import Iterator
-
-import pymupdf
-from langchain_core.callbacks import UsageMetadataCallbackHandler
-
 import logging
+import pymupdf
 from collections.abc import Iterator
 from langchain_core.callbacks import UsageMetadataCallbackHandler
 from hri.graph.registry import get_ingest_graph
 from hri.llm.llm_client import cost_korean_won, get_usd_krw
 from hri.dao.usage_dao import insert_usage
-from hri.domain.schemas import LlmUsage
-
+from hri.dao.report_dao import make_file_hash, select_report_by_hash
 from hri.config.settings import load_settings
-from hri.dao.usage_dao import insert_usage
 from hri.domain.schemas import LlmUsage, ValidationResult
-from hri.graph.registry import get_ingest_graph
-from hri.llm.llm_client import cost_korean_won, get_usd_krw
+from hri.domain.schemas import LlmUsage
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +122,12 @@ def upload_report(file_path: str, user_id: str) -> Iterator[dict]:
 	meta: dict | None = None
 	page_count = 0
 	try:
+		# 같은 사람이 같은 파일을 이미 올렸다면 그래프(LLM·Vision 호출)를 돌리지 않고 안내만 한다.
+		duplicate = select_report_by_hash(make_file_hash(file_path, user_id))
+		if duplicate:
+			yield {"type": "error", "reason": f"이미 업로드한 보고서입니다: {duplicate.title} (보고서 {duplicate.report_id})"}
+			return
+
 		for update in graph.stream(
 			{"file_path": file_path, "user_id": user_id},
 			stream_mode = "updates",
