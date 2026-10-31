@@ -14,7 +14,10 @@ from hri.view.user_view import build_login_tab, on_login, on_logout, login_compo
 from hri.view.report_view import build_upload_tab, build_report_list_panel, on_view_summary, on_go_chat, on_report_search, on_report_select, on_upload, report_list_components, upload_components
 from hri.view.summary_view import build_summary_tab, on_summarize, on_request, summary_components, on_merge
 from hri.view.chat_view import build_chat_tab, chat_components, connect_chat_events, refresh_report_choices, CHAT_TITLE_STYLE
-from hri.view.indicator_view import on_compare
+from hri.view.indicator_view import (
+	on_compare_picked, new_pick, load_compare_reports, reset_compare_reports, on_pick_change, on_pick_page,
+	MAX_COMPARE_REPORTS, COMPARE_TABLE_STYLE, COMPARE_TABLE_SCRIPT
+)
 from hri.view.history_view import build_history_tab, history_components, on_load_history, on_restore, on_prev_page, on_next_page, HISTORY_TABLE_STYLE
 from hri.view.admin_view import build_admin_tab, admin_components, on_refresh
 
@@ -82,25 +85,25 @@ def clear_other_user_screen(state, screen_owner):
 	3. 다른 사람이면 질의응답·요약·내 기록·업로드·지표 비교 화면 내용을 비운다
 
 	- 질문 기록 자체는 DB(qa_logs)에 남아 있어서, 다시 로그인하면 내 기록 탭에서 언제든 볼 수 있다
-	- 돌려주는 값 17개는 build_app()의 outputs 순서와 같아야 한다
+	- 돌려주는 값 19개는 build_app()의 outputs 순서와 같아야 한다
 	  [화면 주인, 대화창, 질문 입력칸, 출처, 👍, 👎, 질의응답 보고서 선택,
 	   요약 보고서 선택, 요약 결과, 요청, 요청 결과,
-	   기록 표, 대화 선택, 업로드 결과, 비교표, 비교 차트]
+	   기록 표, 대화 선택, 업로드 결과, 비교 표, ECOS 데이터, 비교 차트, 비교 차트 안내 문구]
 
 	입력: state (gr.State), screen_owner (지금 화면 내용의 주인 user_id, 처음에는 None)
-	출력: list (값 17개)
+	출력: list (값 19개)
 	"""
 	keep = gr.update()
 
 	# 1) 로그인 실패면 그대로
 	if state["user"] == None:
-		return [screen_owner] + [keep] * 16
+		return [screen_owner] + [keep] * 18
 
 	user_id = state["user"]["user_id"]
 
 	# 2) 처음 로그인이거나 같은 사람이면 화면 그대로
 	if screen_owner == None or screen_owner == user_id:
-		return [user_id] + [keep] * 16
+		return [user_id] + [keep] * 18
 
 	# 3) 다른 사람이면 화면 내용 비우기
 	return [
@@ -119,8 +122,10 @@ def clear_other_user_screen(state, screen_owner):
 		"",  # 기록 표 (내 기록 탭을 열면 다시 채워짐)
 		gr.update(choices=[], value=None),  # 대화 선택
 		"",  # 업로드 결과
-		"",  # 비교표
-		None  # 비교 차트
+		"",  # 비교 표
+		"",  # ECOS 데이터
+		gr.update(value=None, visible=False),  # 비교 차트
+		gr.update(value="", visible=False)  # 비교 차트 안내 문구
 	]
 
 
@@ -132,7 +137,7 @@ def build_app():
 	- 로그인 화면: build_login_tab() (탭 줄 없이 가운데 칸만 보임, 처음에는 이것만 보임)
 	- 보고서 탭: 안에 작은 탭 3개
 		- 보고서 목록·검색: build_report_list_panel()
-		- 지표 비교표: 비교할 보고서 드롭다운 + 비교 버튼 + 비교표 + 차트
+		- 지표 비교표: 왼쪽 보고서 선택 창(목록 + 선택 칸 + 페이지 넘김 + 비교 버튼), 오른쪽 접고 펴는 비교 차트 · 비교 표 · ECOS 데이터
 		- 업로드: build_upload_tab()
 	- 요약·분석, 질의응답, 내 기록, 관리자 탭: 각 담당자의 build_*_tab()
 	  (로그인 전에는 숨김, 관리자 탭은 관리자만 보임)
@@ -141,7 +146,8 @@ def build_app():
 	- 로그인 버튼 → on_login (탭 보이기, 로그아웃 버튼 보이기, 질의응답 탭 선택, 비교 보고서 목록 채우기)
 	- 로그아웃 버튼 → on_logout (로그인 탭만 남기기)
 	- 요약 보기 · 질의응답으로 이동 버튼 → on_view_summary · on_go_chat (탭 이동 + 보고서 드롭다운 바꾸기)
-	- 지표 추출·비교 버튼 → on_compare (비교표, 차트 보여주기)
+	- 지표 추출·비교 버튼 → on_compare_picked (비교 표, ECOS 데이터, 비교 차트 보여주기)
+	- 로그인 뒤 · 지표 비교표 탭을 열면 → reset_compare_reports · load_compare_reports (보고서 선택 창 목록 채우기)
 	- 업로드 버튼 → on_upload (진행 상황·결과 보여주기, 요약·질의응답 탭 보고서 드롭다운 갱신)
 	- 요약·분석 탭을 열면 → refresh_report_choices (보고서 드롭다운 채우기, 질의응답 탭과 같은 함수)
 	- 요약하기 버튼 → on_summarize (선택한 보고서 요약 보여주기)
@@ -178,11 +184,32 @@ def build_app():
 						report_list, go_summary_btn, go_chat_btn = build_report_list_panel(state)
 
 					# 지표 비교표
-					with gr.Tab("지표 비교표", id="compare"):
-						compare_reports = gr.Dropdown(label="비교할 보고서(2개 이상)", choices=[], multiselect=True)
-						compare_btn = gr.Button("지표 추출·비교", variant="primary")
-						compare_table = gr.Markdown()
-						compare_chart = gr.Image(label="비교 차트")
+					with gr.Tab("지표 비교표", id="compare") as compare_tab:
+						# 좌우 1:3 (왼쪽: 보고서 선택 창, 오른쪽: 비교 차트·비교 표·ECOS 데이터)
+						with gr.Row():
+							# 보고서 선택 창: 전체 목록 + 선택 칸(최대 MAX_COMPARE_REPORTS개), 페이지 넘김, 비교 버튼, 진행바가 위아래를 채움
+							with gr.Column(scale=1, elem_id="compare-left"):
+								compare_pick = gr.State(new_pick())
+								compare_reports = gr.CheckboxGroup(label=f"비교할 보고서 (선택 0/{MAX_COMPARE_REPORTS})", choices=[], elem_classes="compare-pick")
+								with gr.Row(elem_id="compare-pager"):
+									compare_prev_btn = gr.Button("◀", size="sm", min_width=0, interactive=False)
+									compare_page = gr.Markdown("1 / 1", elem_classes="compare-page-text")
+									compare_next_btn = gr.Button("▶", size="sm", min_width=0, interactive=False)
+								compare_btn = gr.Button("지표 추출·비교", variant="primary")
+								# 비교 중 진행바를 비교 차트 대신 버튼 바로 아래에 보여 주는 자리 (평소에는 빈 칸)
+								compare_progress = gr.Markdown(min_height=80)
+								compare_pick_outputs = [compare_pick, compare_reports, compare_page, compare_prev_btn, compare_next_btn]
+							# 접고 펼 수 있는 3칸 (처음에는 모두 접힘, 비교가 끝나면 비교 차트를 펼침). 펼친 칸끼리 남는 높이를 똑같이 나눔 (COMPARE_TABLE_STYLE)
+							# 비교 표·ECOS 데이터는 칸 높이에 맞춰 페이지로 나눔 (COMPARE_TABLE_SCRIPT)
+							with gr.Column(scale=3, elem_id="compare-right"):
+								with gr.Accordion("비교 차트", open=False, elem_classes="compare-fold") as compare_chart_fold:
+									# 차트가 없으면 이미지 칸은 숨기고 안내 문구만 가운데에 보여 줌 (on_compare_picked)
+									compare_chart = gr.Image(show_label=False, visible=False)
+									compare_chart_note = gr.Markdown(visible=False, elem_classes="compare-chart-note")
+								with gr.Accordion("비교 표", open=False, elem_classes="compare-fold"):
+									compare_table = gr.Markdown(elem_classes="compare-table")
+								with gr.Accordion("ECOS 데이터", open=False, elem_classes="compare-fold"):
+									compare_ecos = gr.Markdown(elem_classes="compare-table")
 
 					# 보고서 업로드
 					build_upload_tab()
@@ -209,8 +236,12 @@ def build_app():
 				summary_components["report_dropdown"], summary_components["summary_result"], summary_components["merge_result"], summary_components["request"], summary_components["request_result"],
 				history_components["table"], history_components["session_dropdown"],
 				upload_components["result"],
-				compare_table, compare_chart
+				compare_table, compare_ecos, compare_chart, compare_chart_note
 			]
+		).then(
+			fn=reset_compare_reports,
+			inputs=state,
+			outputs=compare_pick_outputs
 		)
 
 		# 로그아웃 버튼 누르면 로그아웃
@@ -274,12 +305,19 @@ def build_app():
 			outputs=[tabs, chat_components["report_dropdown"]]
 		)
 
-		# 지표 추출·비교 버튼 누르면 비교표, 차트 보여주기
+		# 지표 추출·비교 버튼 누르면 비교 표, ECOS 데이터, 비교 차트 보여주기
 		compare_btn.click(
-			fn=on_compare,
-			inputs=compare_reports,
-			outputs=[compare_table, compare_chart]
+			fn=on_compare_picked,
+			inputs=compare_pick,
+			outputs=[compare_table, compare_ecos, compare_chart, compare_chart_note, compare_chart_fold],
+			show_progress_on=compare_progress
 		)
+
+		# 보고서 선택 창: 탭을 열면 목록 다시 읽기, 선택 칸 누르면 선택 반영, 이전·다음 버튼으로 페이지 넘기기
+		compare_tab.select(fn=load_compare_reports, inputs=[state, compare_pick], outputs=compare_pick_outputs)
+		compare_reports.input(fn=on_pick_change, inputs=[compare_reports, compare_pick], outputs=compare_pick_outputs)
+		compare_prev_btn.click(fn=lambda pick: on_pick_page(pick, -1), inputs=compare_pick, outputs=compare_pick_outputs)
+		compare_next_btn.click(fn=lambda pick: on_pick_page(pick, 1), inputs=compare_pick, outputs=compare_pick_outputs)
 
 		# 업로드 버튼 누르면 진행 상황·결과를 보여주고, 요약·질의응답 탭 보고서 드롭다운 갱신
 		upload_components["upload_btn"].click(
@@ -354,4 +392,4 @@ def main():
 	# 화면 띄우기
 	demo = build_app()
 	# 스타일은 head로 한 번에 넣는다 (화면 안에 빈 HTML 칸을 만들면 위쪽 여백이 생겨서)
-	demo.launch(server_port=7860, theme=APP_THEME, footer_links=[], head=LOGIN_BOX_STYLE + HISTORY_TABLE_STYLE + LOGOUT_STYLE + CHAT_TITLE_STYLE)
+	demo.launch(server_port=7860, theme=APP_THEME, footer_links=[], head=LOGIN_BOX_STYLE + HISTORY_TABLE_STYLE + LOGOUT_STYLE + CHAT_TITLE_STYLE + COMPARE_TABLE_STYLE + COMPARE_TABLE_SCRIPT)
