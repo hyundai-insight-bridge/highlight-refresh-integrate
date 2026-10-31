@@ -21,6 +21,9 @@ DEFAULT_PERSONA = "실무자"
 DEFAULT_K = 4
 MAX_SUGGESTIONS = 3  # 추천 질문 버튼 개수
 NEED_LOGIN_MESSAGE = "로그인 후 이용해 주세요."
+# 보고서 목록에서 한 번에 고를 수 있는 보고서 수 (CHAT_TITLE_STYLE의 비활성화 선택자도 label.selected 5개 기준)
+MAX_SELECTED_REPORTS = 5
+SELECT_LIMIT_MESSAGE = "보고서는 최대 {max}개까지 선택할 수 있습니다."
 
 # 소스·채팅 제목 칸의 위아래 스크롤 화살표 숨기기 (head에 넣는 스타일, rem·em만 씀)
 CHAT_TITLE_STYLE = """
@@ -69,6 +72,33 @@ CHAT_TITLE_STYLE = """
 }
 #chat-history-col {
 	overflow-y: auto;
+}
+/* 보고서 목록: 한 줄에 보고서 하나씩 선택 박스와 함께 */
+#chat-report-list [data-testid="checkbox-group"] {
+	flex-direction: column;
+	flex-wrap: nowrap;
+	align-items: stretch;
+	gap: 0;
+}
+/* 보고서 줄 배경: 선택 여부와 상관없이 흰색·연한 회색 번갈아, 글자는 항상 기본 글자색
+   (Soft 테마는 background-fill-primary·secondary가 둘 다 neutral-50이라 직접 지정하고,
+    고른 줄의 파란 배경·흰 글자(checkbox-label-*-selected)도 여기서 덮어씀) */
+#chat-report-list [data-testid="checkbox-group"] > label {
+	border-radius: 0;
+	background: var(--block-background-fill);
+	color: var(--body-text-color);
+}
+#chat-report-list [data-testid="checkbox-group"] > label:nth-of-type(even) {
+	background: var(--neutral-100);
+}
+.dark #chat-report-list [data-testid="checkbox-group"] > label:nth-of-type(even) {
+	background: var(--neutral-700);
+}
+/* 보고서를 최대 개수(MAX_SELECTED_REPORTS, 5개)만큼 고르면 나머지 보고서는 흐리게 하고 누를 수 없게 함
+   (Gradio가 고른 보고서 줄에 selected 클래스를 붙인다) */
+#chat-report-list [data-testid="checkbox-group"]:has(> label.selected ~ label.selected ~ label.selected ~ label.selected ~ label.selected) > label:not(.selected) {
+	opacity: 0.45;
+	pointer-events: none;
 }
 #chat-bot {
 	flex: 1 1 auto;
@@ -177,7 +207,7 @@ def build_chat_tab():
 	"""질의응답 탭 화면을 만든다. (gr.Blocks의 gr.Tabs 안에서 호출)
 
 	화면을 소스(3)·채팅(6) 두 칸으로 나누고, 스튜디오는 오른쪽에서 펼쳐지는 사이드바로 둔다. (UI 레퍼런스: 소스·채팅·스튜디오 3단 배치)
-	- 왼쪽(소스): 보고서 선택(여러 개 가능)·페르소나(입문자/실무자/전문가)·검색 옵션(k, MMR),
+	- 왼쪽(소스): 보고서 목록(선택 박스, 최대 5개)·페르소나(입문자/실무자/전문가)·검색 옵션(k, MMR),
 	  답변이 끝나면 그 아래에 출처가 나온다. 칸 맨 아래에는 '과거 대화 기록' 버튼이 붙어 있고, 누르면
 	  채팅 칸 자리에 과거 대화 기록(build_history_panel, 임세준)이 보인다 (연결은 build_app).
 	- 가운데(채팅): 추천 질문 버튼 3개(한 줄) → 대화창(gr.Chatbot) → 👍/👎 → 질문 입력칸·전송 버튼.
@@ -200,7 +230,11 @@ def build_chat_tab():
 			with gr.Column(scale=3, variant="panel", elem_id="chat-source-col"):
 				with gr.Column(elem_id="chat-source-body"):
 					gr.Markdown("#### 소스", elem_id="chat-source-title")
-					report_dropdown = gr.Dropdown(label="보고서 선택 (여러 개 가능)", choices=[], multiselect=True)
+					# 보고서 목록(선택 박스). 키 이름은 다른 화면·app.py와 맞추려고 report_dropdown 그대로 둔다 (선택지·값 갱신 방식은 Dropdown과 같다)
+					# 최대 MAX_SELECTED_REPORTS개까지 고를 수 있어서 전체 선택 박스는 두지 않는다
+					report_dropdown = gr.CheckboxGroup(
+						label=f"보고서 선택 (최대 {MAX_SELECTED_REPORTS}개)", choices=[], elem_id="chat-report-list"
+					)
 					persona = gr.Radio(PERSONA_CHOICES, value=DEFAULT_PERSONA, label="페르소나")
 					with gr.Accordion("검색 옵션", open=False):
 						k = gr.Slider(1, 10, value=DEFAULT_K, step=1, label="가져올 근거 수 (k)")
@@ -276,6 +310,23 @@ def refresh_report_choices(state: dict, selected: list[int] | None):
 	return gr.update(choices=choices, value=[i for i in wanted if i in existing])
 
 
+def on_limit_reports(report_ids: list[int]):
+	"""보고서 목록 값이 바뀔 때: MAX_SELECTED_REPORTS개를 넘으면 앞에서부터 그 개수만 남기고 안내한다.
+
+	화면에서는 5개를 고르면 나머지가 비활성화되지만(CHAT_TITLE_STYLE), 키보드로 고르거나
+	보고서 목록 화면에서 더 많이 골라 넘어온 경우를 위해 서버에서도 한 번 더 맞춘다.
+
+	입력: report_ids (선택한 보고서 번호 목록)
+	출력: 보고서 목록 갱신 (넘지 않으면 그대로)
+	"""
+	report_ids = list(report_ids or [])
+	if len(report_ids) <= MAX_SELECTED_REPORTS:
+		return gr.update()
+
+	gr.Info(SELECT_LIMIT_MESSAGE.format(max=MAX_SELECTED_REPORTS))
+	return gr.update(value=report_ids[:MAX_SELECTED_REPORTS])
+
+
 def respond_stream(message: str, history: list, persona: str, report_ids: list[int], k: int, use_mmr: bool, state: dict):
 	"""질문을 ask_stream()에 보내고, 글자 조각이 올 때마다 대화창을 갱신하며 답변이 흘러나오게 한다.
 
@@ -332,6 +383,7 @@ def connect_chat_events(state: gr.State) -> None:
 
 	- 질문 입력칸에서 Enter, 전송 버튼 클릭 → respond_stream (답변이 흘러나옴)
 	- 질의응답 탭을 열 때 → refresh_report_choices (보고서 선택지 채우기)
+	- 보고서 목록 값이 바뀔 때 → on_limit_reports (최대 5개까지만 남기기)
 	  (connect_feedback_events가 앞뒤로 👍/👎 숨기기·보이기를 붙여 차례로 실행한다, 류현수)
 	"""
 	c = chat_components
@@ -341,6 +393,8 @@ def connect_chat_events(state: gr.State) -> None:
 	# 질문 보내기: 👍/👎 숨기기 → respond_stream → 기록이 새로 생긴 답변이면 👍/👎 보이기 (류현수)
 	connect_feedback_events(state, [c["message"].submit, c["send_btn"].click], stream)
 	c["tab"].select(refresh_report_choices, inputs=[state, c["report_dropdown"]], outputs=c["report_dropdown"])
+	# 보고서 목록 값이 바뀌면 최대 개수(5개)를 넘지 않게 맞추기 (탭 열기·질의응답으로 이동·업로드로 바뀔 때도 포함)
+	c["report_dropdown"].change(on_limit_reports, inputs=c["report_dropdown"], outputs=c["report_dropdown"])
 
 
 # ---------------------------------------------------------------------
