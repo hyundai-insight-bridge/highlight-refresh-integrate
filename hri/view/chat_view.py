@@ -65,6 +65,8 @@ CHAT_TITLE_STYLE = """
 </style>
 """
 ERROR_MESSAGE = "답변을 만드는 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요."
+# 첫 글자 조각이 오기 전(질문 다듬기·검색 중)에 답변 칸에 보여 줄 문구. 빈 답변 칸만 떠 있으면 멈춘 것처럼 보여서 넣는다
+THINKING_MESSAGE = "⏳ 답변을 준비하는 중..."
 
 # app.py·다른 담당자가 컴포넌트를 꺼내 쓸 때 쓰는 모음 (login_components 등과 같은 방식)
 chat_components = {}
@@ -254,7 +256,8 @@ def refresh_report_choices(state: dict, selected: list[int] | None):
 def respond_stream(message: str, history: list, persona: str, report_ids: list[int], k: int, use_mmr: bool, state: dict):
 	"""질문을 ask_stream()에 보내고, 글자 조각이 올 때마다 대화창을 갱신하며 답변이 흘러나오게 한다.
 
-	처음에 입력칸을 비우고 이전 출처·추천 질문을 지운다. 글자 조각(str)은 마지막 답변에 이어 붙이고,
+	처음에 입력칸을 비우고 이전 출처·추천 질문을 지우며, 답변 칸에 THINKING_MESSAGE를 띄운다.
+	글자 조각(str)이 오면 그 문구를 지우고 마지막 답변에 이어 붙이고,
 	마지막에 AnswerResult가 오면 출처(Markdown)·추천 질문 버튼·state['last_log_id']를 갱신한다.
 	로그인 전이면 안내만 하고, 질문 처리 중 예외가 나면 오류 안내 문구를 답변으로 보여 준다.
 
@@ -272,7 +275,9 @@ def respond_stream(message: str, history: list, persona: str, report_ids: list[i
 		yield history, keep, keep, *[keep] * MAX_SUGGESTIONS, state
 		return
 
-	# 새 질문이 시작되면 입력칸을 비우고 이전 질문의 출처·추천 질문을 지운다
+	# 새 질문이 시작되면 입력칸을 비우고 이전 질문의 출처·추천 질문을 지운다.
+	# 답변 칸에는 첫 글자 조각이 올 때까지 준비 중 문구를 보여 준다 (질문 다듬기·검색이 끝나야 글자가 나오기 시작한다)
+	history[-1]["content"] = THINKING_MESSAGE
 	yield history, "", "", *_suggest_updates([]), state
 
 	answer = ""
