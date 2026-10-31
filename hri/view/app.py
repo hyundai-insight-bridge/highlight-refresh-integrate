@@ -12,7 +12,7 @@ from hri.config.settings import load_settings
 from hri.graph.registry import get_ingest_graph, get_qa_graph, get_summary_graph, get_agent_graph
 from hri.view.user_view import build_login_tab, on_login, on_logout, login_components, LOGIN_BOX_STYLE
 from hri.view.report_view import build_upload_tab, build_report_list_panel, on_view_summary, on_go_chat, on_report_search, on_report_select, on_upload, report_list_components, upload_components
-from hri.view.summary_view import build_summary_tab, on_summarize, on_request, summary_components, on_merge
+from hri.view.summary_view import build_summary_tab, on_summarize_three_lines, on_summarize_sections, on_prev_page as on_summary_prev_page, on_next_page as on_summary_next_page, on_clear_pages, on_limit_reports, on_request, summary_components, on_merge, SUMMARY_TAB_STYLE, SCROLL_RESULT_TOP_JS
 from hri.view.chat_view import build_chat_tab, chat_components, connect_chat_events, refresh_report_choices, CHAT_TITLE_STYLE
 from hri.view.indicator_view import on_compare
 from hri.view.history_view import history_components, on_load_history, on_restore, on_prev_page, on_next_page, HISTORY_TABLE_STYLE
@@ -83,7 +83,7 @@ def clear_other_user_screen(state, screen_owner):
 	- 질문 기록 자체는 DB(qa_logs)에 남아 있어서, 다시 로그인하면 질의응답 탭의 과거 대화 기록에서 언제든 볼 수 있다
 	- 돌려주는 값 17개는 build_app()의 outputs 순서와 같아야 한다
 	  [화면 주인, 대화창, 질문 입력칸, 출처, 👍, 👎, 질의응답 보고서 선택,
-	   요약 보고서 선택, 요약 결과, 요청, 요청 결과,
+	   요약 보고서 선택, 요약 결과, 요약 페이지 넘김 줄, 요청, 요청 결과,
 	   기록 표, 대화 선택, 업로드 결과, 비교표, 비교 차트]
 
 	입력: state (gr.State), screen_owner (지금 화면 내용의 주인 user_id, 처음에는 None)
@@ -112,7 +112,7 @@ def clear_other_user_screen(state, screen_owner):
 		gr.update(value=[]),  # 질의응답 보고서 선택
 		gr.update(value=[]),  # 요약 보고서 선택
 		"",  # 요약 결과
-		"",  # 병합 결과
+		gr.update(visible=False),  # 요약 페이지 넘김 줄 (요약·병합 결과는 한 칸에 나옴)
 		"",  # 요청
 		"",  # 요청 결과
 		"",  # 기록 표 (과거 대화 기록 버튼을 누르면 다시 채워짐)
@@ -153,7 +153,10 @@ def build_app():
 	- 지표 추출·비교 버튼 → on_compare (비교표, 차트 보여주기)
 	- 업로드 버튼 → on_upload (진행 상황·결과 보여주기, 요약·질의응답 탭 보고서 드롭다운 갱신)
 	- 요약·분석 탭을 열면 → refresh_report_choices (보고서 드롭다운 채우기, 질의응답 탭과 같은 함수)
-	- 요약하기 버튼 → on_summarize (선택한 보고서 요약 보여주기)
+	- 요약 탭 보고서 목록 값이 바뀌면 → on_limit_reports (최대 5개까지만 남기기)
+	- 3줄 요약하기 · 섹션별 요약하기 버튼 → on_summarize_three_lines · on_summarize_sections (보고서별 요약을 결과 칸에 1페이지씩)
+	- 요약 결과 이전·다음 버튼 → on_summary_prev_page · on_summary_next_page
+	- 병합하기 버튼 → on_clear_pages · on_merge (요약 페이지를 비우고 같은 결과 칸에 병합 결과 보여주기)
 	- 요청 실행 버튼 → on_request (자연어 요청 결과·실행한 도구 보여주기)
 	  (업로드·요약 버튼은 다른 탭의 드롭다운이나 state가 필요해서 모든 탭을 만든 뒤 여기서 연결한다)
 	- 질의응답 탭의 과거 대화 기록 버튼 → show_history · on_load_history (채팅 칸 대신 기록 칸, 대화별 기록 표·대화 선택 목록 채우기)
@@ -215,7 +218,7 @@ def build_app():
 				screen_owner,
 				chat_components["chatbot"], chat_components["message"], chat_components["sources"],
 				chat_components["like_btn"], chat_components["dislike_btn"], chat_components["report_dropdown"],
-				summary_components["report_dropdown"], summary_components["summary_result"], summary_components["merge_result"], summary_components["request"], summary_components["request_result"],
+				summary_components["report_dropdown"], summary_components["summary_result"], summary_components["pager"], summary_components["request"], summary_components["request_result"],
 				history_components["table"], history_components["session_dropdown"],
 				upload_components["result"],
 				compare_table, compare_chart
@@ -335,18 +338,47 @@ def build_app():
 			outputs=summary_components["report_dropdown"]
 		)
 
-		# 요약하기 버튼 누르면 선택한 보고서 요약 보여주기
-		summary_components["summarize_btn"].click(
-			fn=on_summarize,
-			inputs=[summary_components["report_dropdown"],summary_components["view_radio"]],
-			outputs=summary_components["summary_result"]
+		# 요약 탭 보고서 목록 값이 바뀌면 최대 개수(5개)를 넘지 않게 맞추기 (탭 열기·요약 보기·업로드로 바뀔 때도 포함)
+		summary_components["report_dropdown"].change(
+			fn=on_limit_reports,
+			inputs=summary_components["report_dropdown"],
+			outputs=summary_components["report_dropdown"]
 		)
 
-		# 병합하기 버튼 누르면 선택한 보고서를 병합해서 보여주기
+		# 3줄 요약하기·섹션별 요약하기 버튼 누르면 선택한 보고서 요약을 결과 칸에 1페이지씩 보여주기
+		summary_components["three_lines_btn"].click(
+			fn=on_summarize_three_lines,
+			inputs=summary_components["report_dropdown"],
+			outputs=summary_components["page_outputs"]
+		).then(fn=None, js=SCROLL_RESULT_TOP_JS)
+		summary_components["sections_btn"].click(
+			fn=on_summarize_sections,
+			inputs=summary_components["report_dropdown"],
+			outputs=summary_components["page_outputs"]
+		).then(fn=None, js=SCROLL_RESULT_TOP_JS)
+
+		# 요약 결과 이전·다음 페이지 버튼
+		summary_components["prev_btn"].click(
+			fn=on_summary_prev_page,
+			inputs=[summary_components["pages_state"], summary_components["page_state"]],
+			outputs=summary_components["page_outputs"]
+		).then(fn=None, js=SCROLL_RESULT_TOP_JS)
+		summary_components["next_btn"].click(
+			fn=on_summary_next_page,
+			inputs=[summary_components["pages_state"], summary_components["page_state"]],
+			outputs=summary_components["page_outputs"]
+		).then(fn=None, js=SCROLL_RESULT_TOP_JS)
+
+		# 병합하기 버튼 누르면 요약 페이지를 비우고 같은 결과 칸에 병합 결과 보여주기
 		summary_components["merge_btn"].click(
+			fn=on_clear_pages,
+			outputs=summary_components["page_outputs"]
+		).then(
+			fn=None, js=SCROLL_RESULT_TOP_JS
+		).then(
 			fn=on_merge,
 			inputs=summary_components["report_dropdown"],
-			outputs=summary_components["merge_result"]
+			outputs=summary_components["summary_result"]
 		)
 
 		# 요청 실행 버튼 누르면 자연어 요청을 에이전트로 처리해서 결과와 실행한 도구 보여주기
@@ -384,4 +416,6 @@ def main():
 	# 화면 띄우기
 	demo = build_app()
 	# 스타일은 head로 한 번에 넣는다 (화면 안에 빈 HTML 칸을 만들면 위쪽 여백이 생겨서)
-	demo.launch(server_port=7860, theme=APP_THEME, footer_links=[], head=LOGIN_BOX_STYLE + HISTORY_TABLE_STYLE + LOGOUT_STYLE + CHAT_TITLE_STYLE + ADMIN_SCROLLBAR_STYLE)
+
+	demo.launch(server_port=7860, theme=APP_THEME, footer_links=[], head=LOGIN_BOX_STYLE + HISTORY_TABLE_STYLE + LOGOUT_STYLE + CHAT_TITLE_STYLE + SUMMARY_TAB_STYLE + ADMIN_SCROLLBAR_STYLE)
+
