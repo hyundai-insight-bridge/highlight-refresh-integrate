@@ -65,6 +65,11 @@ CHAT_TITLE_STYLE = """
 	overflow-y: auto;
 	flex-wrap: nowrap;
 }
+/* 소스 제목: 내용이 넘쳐도 줄어들지 않게 해서 제목 칸 안에 스크롤이 생기지 않고 항상 보이게 함 */
+#chat-source-title {
+	flex-shrink: 0 !important;
+	overflow: visible !important;
+}
 /* 과거 대화 기록 버튼: 소스 칸 맨 아래에 붙음 */
 #chat-history-btn {
 	flex: 0 0 auto !important;
@@ -103,6 +108,16 @@ CHAT_TITLE_STYLE = """
 	flex: 1 1 auto;
 	min-height: 0;
 	height: auto;
+}
+/* 질문 입력칸 아래 안내 문구: 작고 흐린 글자로 가운데 정렬, 칸 높이가 모자라도 줄어들지 않음 */
+#chat-ai-notice {
+	flex-shrink: 0;
+}
+#chat-ai-notice,
+#chat-ai-notice * {
+	text-align: center;
+	font-size: 0.8rem;
+	color: var(--body-text-color-subdued);
 }
 #chat-bot .bubble-wrap {
 	overflow-y: auto;
@@ -268,6 +283,8 @@ def build_chat_tab():
 				with gr.Row(equal_height=True):
 					message.render()
 					send_btn = gr.Button("전송", variant="primary", scale=0, min_width=90)
+				# 질문 입력칸 아래 안내 문구
+				gr.Markdown("AI 답변은 선택한 보고서 내용을 바탕으로 합니다. 중요한 수치는 출처 쪽수와 원문을 확인해 주세요.", elem_id="chat-ai-notice")
 			# 가운데(채팅 칸 자리): 과거 대화 기록. 처음에는 숨김
 			build_history_panel()
 		# 오른쪽: 스튜디오 (용어 카드). gr.Sidebar라서 화면 오른쪽 끝의 버튼으로 펼치고 접는다 (처음에는 접힘)
