@@ -12,7 +12,7 @@ from hri.config.settings import load_settings
 from hri.graph.registry import get_ingest_graph, get_qa_graph, get_summary_graph, get_agent_graph
 from hri.view.user_view import build_login_tab, on_login, on_logout, login_components, LOGIN_BOX_STYLE
 from hri.view.report_view import build_upload_tab, build_report_list_panel, on_view_summary, on_go_chat, on_report_search, on_report_select, on_upload, report_list_components, upload_components
-from hri.view.summary_view import build_summary_tab, on_summarize_three_lines, on_summarize_sections, on_prev_page as on_summary_prev_page, on_next_page as on_summary_next_page, on_clear_pages, on_limit_reports, on_request, summary_components, on_merge, SUMMARY_TAB_STYLE, SCROLL_RESULT_TOP_JS
+from hri.view.summary_view import build_summary_tab, on_summarize_three_lines, on_summarize_sections, on_prev_page as on_summary_prev_page, on_next_page as on_summary_next_page, on_clear_pages, on_limit_reports, summary_components, on_merge, SUMMARY_TAB_STYLE, SCROLL_RESULT_TOP_JS
 from hri.view.chat_view import build_chat_tab, chat_components, connect_chat_events, refresh_report_choices, CHAT_TITLE_STYLE
 from hri.view.indicator_view import on_compare
 from hri.view.history_view import history_components, on_load_history, on_restore, on_prev_page, on_next_page, HISTORY_TABLE_STYLE
@@ -82,25 +82,25 @@ def clear_other_user_screen(state, screen_owner):
 	3. 다른 사람이면 질의응답·요약·과거 대화 기록·업로드·지표 비교 화면 내용을 비운다
 
 	- 질문 기록 자체는 DB(qa_logs)에 남아 있어서, 다시 로그인하면 질의응답 탭의 과거 대화 기록에서 언제든 볼 수 있다
-	- 돌려주는 값 17개는 build_app()의 outputs 순서와 같아야 한다
+	- 돌려주는 값 15개는 build_app()의 outputs 순서와 같아야 한다
 	  [화면 주인, 대화창, 질문 입력칸, 출처, 👍, 👎, 질의응답 보고서 선택,
-	   요약 보고서 선택, 요약 결과, 요약 페이지 넘김 줄, 요청, 요청 결과,
+	   요약 보고서 선택, 요약 결과, 요약 페이지 넘김 줄,
 	   기록 표, 대화 선택, 업로드 결과, 비교표, 비교 차트]
 
 	입력: state (gr.State), screen_owner (지금 화면 내용의 주인 user_id, 처음에는 None)
-	출력: list (값 17개)
+	출력: list (값 15개)
 	"""
 	keep = gr.update()
 
 	# 1) 로그인 실패면 그대로
 	if state["user"] == None:
-		return [screen_owner] + [keep] * 16
+		return [screen_owner] + [keep] * 14
 
 	user_id = state["user"]["user_id"]
 
 	# 2) 처음 로그인이거나 같은 사람이면 화면 그대로
 	if screen_owner == None or screen_owner == user_id:
-		return [user_id] + [keep] * 16
+		return [user_id] + [keep] * 14
 
 	# 3) 다른 사람이면 화면 내용 비우기
 	return [
@@ -114,8 +114,6 @@ def clear_other_user_screen(state, screen_owner):
 		gr.update(value=[]),  # 요약 보고서 선택
 		"",  # 요약 결과
 		gr.update(visible=False),  # 요약 페이지 넘김 줄 (요약·병합 결과는 한 칸에 나옴)
-		"",  # 요청
-		"",  # 요청 결과
 		"",  # 기록 표 (과거 대화 기록 버튼을 누르면 다시 채워짐)
 		gr.update(choices=[], value=None),  # 대화 선택
 		"",  # 업로드 결과
@@ -186,7 +184,6 @@ def build_app():
 	- 3줄 요약하기 · 섹션별 요약하기 버튼 → on_summarize_three_lines · on_summarize_sections (보고서별 요약을 결과 칸에 1페이지씩)
 	- 요약 결과 이전·다음 버튼 → on_summary_prev_page · on_summary_next_page
 	- 병합하기 버튼 → on_clear_pages · on_merge (요약 페이지를 비우고 같은 결과 칸에 병합 결과 보여주기)
-	- 요청 실행 버튼 → on_request (자연어 요청 결과·실행한 도구 보여주기)
 	  (업로드·요약 버튼은 다른 탭의 드롭다운이나 state가 필요해서 모든 탭을 만든 뒤 여기서 연결한다)
 	- 질의응답 탭의 과거 대화 기록 버튼 → show_history · on_load_history (채팅 칸 대신 기록 칸, 대화별 기록 표·대화 선택 목록 채우기)
 	- 채팅으로 돌아가기 · 대화 이어가기 버튼 → show_chat (기록 칸을 닫고 채팅 칸 보이기)
@@ -249,7 +246,7 @@ def build_app():
 				screen_owner,
 				chat_components["chatbot"], chat_components["message"], chat_components["sources"],
 				chat_components["like_btn"], chat_components["dislike_btn"], chat_components["report_dropdown"],
-				summary_components["report_dropdown"], summary_components["summary_result"], summary_components["pager"], summary_components["request"], summary_components["request_result"],
+				summary_components["report_dropdown"], summary_components["summary_result"], summary_components["pager"],
 				history_components["table"], history_components["session_dropdown"],
 				upload_components["result"],
 				compare_table, compare_chart
@@ -415,13 +412,6 @@ def build_app():
 			fn=on_merge,
 			inputs=summary_components["report_dropdown"],
 			outputs=summary_components["summary_result"]
-		)
-
-		# 요청 실행 버튼 누르면 자연어 요청을 에이전트로 처리해서 결과와 실행한 도구 보여주기
-		summary_components["request_btn"].click(
-			fn=on_request,
-			inputs=[summary_components["request"], summary_components["report_dropdown"]],
-			outputs=summary_components["request_result"]
 		)
 
 	return demo

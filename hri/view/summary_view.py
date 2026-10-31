@@ -1,4 +1,4 @@
-"""요약·분석 탭 · build_summary_tab, on_summarize, on_request (김희진)"""
+"""요약·분석 탭 · build_summary_tab, on_summarize (김희진)"""
 import logging
 import gradio as gr
 from hri.util.logger import safe_call
@@ -14,14 +14,11 @@ MAX_SELECTED_REPORTS = 5
 SELECT_LIMIT_MESSAGE = "보고서는 최대 {max}개까지 선택할 수 있습니다."
 SUMMARY_TAB_ID = "summary"
 NEED_REPORT_MESSAGE = "보고서를 선택하세요."
-NEED_REQUEST_MESSAGE = "요청 내용을 입력하세요."
 NEED_MERGE_MESSAGE = "병합하려면 보고서를 2개 이상 선택하세요."
 SUMMARY_FAIL_MESSAGE = "요약을 만들지 못했습니다."
 MERGE_FAIL_MESSAGE = "병합 결과를 만들지 못했습니다."
 MERGE_ERROR_MESSAGE = "병합 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요."
 SUMMARY_ERROR_MESSAGE = "요약 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요."
-REQUEST_ERROR_MESSAGE = "요청을 처리하지 못했습니다."
-EMPTY_ANSWER_MESSAGE = "요청을 처리했지만 표시할 답변이 없습니다."
 MERGE_TOO_MANY_MESSAGE = "한번에 병합할 수 있는 보고서는 {max}개 까지 입니다."
 MERGE_DUPLICATE_NOTE = "⚠️ 제목이 같은 보고서가 있습니다. 같은 문서를 중복 업로드했다면 같은 내용이 '공통 의견'으로 나올 수 있습니다."
 VIEW_THREE_LINES = "3줄 요약"
@@ -111,14 +108,6 @@ SUMMARY_TAB_STYLE = """
 #summary-page-label {
 	text-align: center;
 }
-/* 아래쪽 자연어 요청 칸: 필요한 만큼만 쓰고, 요청 결과가 길면 이 안에서 스크롤 */
-#summary-request-col {
-	flex: 0 0 auto !important;
-}
-#summary-request-result {
-	max-height: 20vh;
-	overflow-y: auto;
-}
 </style>
 """
 # 결과 칸 스크롤을 맨 위로 올리는 스크립트 (페이지를 넘기거나 새 결과가 나올 때 이전 스크롤 위치가 남지 않게)
@@ -135,14 +124,6 @@ def _summarize_report(report_id: int):
     from hri.service.summary_service import summarize_report
     
     return summarize_report(report_id)
-
-def _run_agent(request: str, report_ids: list[int]):
-    """
-    run_agent_with_tools를 호출하는 시점에 불러와 실행한다
-    (이유는 _summarize_report와 같다)."""
-    from hri.router.tool_router import run_agent_with_tools
-
-    return run_agent_with_tools(request, report_ids)
 
 def _merge_reports(report_ids: list[int]):
     """merge_reports를 호출하는 시점에 불러와 실행한다
@@ -243,15 +224,6 @@ def build_summary_tab():
                     # 요약 결과 페이지 목록(보고서별 Markdown)과 지금 보고 있는 페이지 번호(0부터)
                     pages_state = gr.State([])
                     page_state = gr.State(0)
-            # 아래: 자연어 요청 (이후 삭제 예정)
-            with gr.Column(elem_id="summary-request-col"):
-                request = gr.Textbox(
-                    label="자연어 요청 (검증·ECOS 조회·병합 등 도구 자동 선택)",
-                    placeholder="예) 선택한 보고서 수치를 ECOS 통계로 검증해줘",
-                    lines=2,
-                )
-                request_btn = gr.Button("요청 실행")
-                request_result = gr.Markdown(elem_id="summary-request-result")
 
     summary_components.update(
         tab=tab,
@@ -268,9 +240,6 @@ def build_summary_tab():
         page_state=page_state,
         # 요약 결과·페이지를 바꾸는 이벤트들이 함께 쓰는 출력 목록 (_show_page의 반환 순서와 같다)
         page_outputs=[summary_result, pages_state, page_state, pager, page_label, prev_btn, next_btn],
-        request=request,
-        request_btn=request_btn,
-        request_result=request_result,
     )
     return tab
 
@@ -424,31 +393,3 @@ def on_merge(report_ids: list[int]) -> str:
         return
     notes = [MERGE_DUPLICATE_NOTE] if len(set(names)) < len(names) else []
     yield _merge_markdown(names, merged, notes)
-
-@safe_call
-def on_request(request: str, report_ids: list[int]) -> str:
-    """요청 실행 버튼: 자연어 요청을 run_agent_with_tools()에 보내고 결과와 실행한 도구 이름을 보여 준다.
-    보고서를 고르지 않아도 실행한다 (ECOS 조회처럼 보고서가 필요 없는 도구가 있고, 보고서가 필요한 도구는 도구 쪽에서 안내한다).
-    run_agent_with_tools()가 (답변, 도구 이름 목록)을 돌려주면 도구 이름도 함께 보여 주고, 답변 문자열만 돌려주면 답변만 보여 준다.
-    
-    입력: request (자연어 요청), report_ids (선택한 보고서 번호 목록, 비어 있어도 됨)
-    출력: str (화면에 보여 줄 Markdown)
-    """
-    request = (request or "").strip()
-    if not request:
-        return NEED_REQUEST_MESSAGE
-
-    try:
-        result = _run_agent(request, list(report_ids or []))
-    except Exception:
-        logger.exception("요청 실행 실패: %s", request)
-        return REQUEST_ERROR_MESSAGE
-
-    answer, tool_names = result if isinstance(result, tuple) else (result, [])
-    answer = _escape_tilde((answer or "").strip()) or EMPTY_ANSWER_MESSAGE
-
-    if not tool_names:
-        return answer
-    tools = " → ".join(f"`{name}`" for name in tool_names)
-
-    return f"{answer}\n\n**실행한 도구**: {tools}"
