@@ -2,13 +2,17 @@
 import logging
 import re
 import uuid
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from pydantic import BaseModel, Field
 
 from hri.dao.indicator_dao import insert_indicators, select_indicators
 from hri.domain.schemas import Indicator
 from hri.service.report_service import get_report_text, search_reports
+
+from langchain_openai import ChatOpenAI
+
+from hri.llm.llm_client import MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -19,19 +23,46 @@ logger = logging.getLogger(__name__)
 # =====================================================================
 
 # 지표 추출 답변이 길어질 수 있어 넉넉히 둔다 (gpt-5-mini는 추론 토큰도 max_tokens에 포함)
-INDICATOR_MAX_TOKENS = 4000
+INDICATOR_MAX_TOKENS = 16000
 
 # 지표 이름 통일표: 대표 이름 → 보고서마다 다르게 쓰는 이름들
 # 보고서끼리 지표를 비교하려면 같은 지표가 같은 이름이어야 한다 (이름이 없으면 추가하면 된다)
 INDICATOR_ALIASES: dict[str, list[str]] = {
-	"경제성장률": ["GDP 성장률", "실질GDP 성장률", "실질 GDP 증가율", "GDP 증가율", "성장률"],
-	"소비자물가 상승률": ["소비자물가", "소비자물가상승률", "CPI", "CPI 상승률", "물가 상승률", "물가상승률", "소비자물가지수 상승률"],
-	"실업률": [],
-	"기준금리": ["정책금리", "한국은행 기준금리"],
-	"원/달러 환율": ["원달러 환율", "원-달러 환율", "원/달러", "달러 환율", "USD/KRW"],
-	"경상수지": [],
-	"수출 증가율": ["수출증가율", "수출 증가"],
-	"수입 증가율": ["수입증가율", "수입 증가"],
+	# 성장·생산·소비·투자
+	"경제성장률": ["GDP 성장률", "실질GDP 성장률", "실질 GDP 증가율", "GDP 증가율", "성장률", "국내총생산 성장률", "국내총생산 증가율", "실질성장률"],
+	"명목 GDP 성장률": ["명목GDP 증가율", "명목 GDP 증가율", "명목성장률"],
+	"민간소비 증가율": ["민간소비", "민간소비 성장률", "민간소비지출 증가율", "민간 최종소비지출 증가율"],
+	"설비투자 증가율": ["설비투자", "설비투자 성장률"],
+	"건설투자 증가율": ["건설투자", "건설투자 성장률"],
+	"광공업생산 증가율": ["광공업생산", "광공업 생산"],
+	"소매판매 증가율": ["소매판매", "소매판매액 증가율"],
+	# 물가
+	"소비자물가 상승률": ["소비자물가", "소비자물가상승률", "CPI", "CPI 상승률", "물가 상승률", "물가상승률", "소비자물가지수 상승률", "소비자물가 증가율", "소비자물가지수 증가율", "인플레이션율"],
+	"근원물가 상승률": ["근원 소비자물가 상승률", "근원CPI", "근원 CPI 상승률", "근원물가", "근원인플레이션"],
+	"생산자물가 상승률": ["PPI", "PPI 상승률", "생산자물가", "생산자물가 증가율"],
+	# 고용
+	"실업률": ["전체 실업률"],
+	"고용률": ["전체 고용률"],
+	"취업자 수 증감": ["취업자 증가", "취업자 증감", "취업자수 증가", "취업자 수 증가", "취업자 증가폭"],
+	# 금리·환율·시장
+	"기준금리": ["정책금리", "한국은행 기준금리", "한은 기준금리", "BOK 기준금리"],
+	"국고채 3년 금리": ["국고채(3년) 금리", "국고채 3년물 금리", "국고채 3년물", "국고채 금리(3년)", "국고채3년"],
+	"원/달러 환율": ["원달러 환율", "원-달러 환율", "원·달러 환율", "원/달러", "달러 환율", "USD/KRW", "달러당 원화 환율"],
+	"코스피": ["KOSPI", "코스피 지수", "KOSPI 지수"],
+	"두바이유 가격": ["두바이유", "두바이유가", "두바이유 가격(배럴당)"],
+	"WTI 유가": ["WTI", "WTI 가격", "WTI유가"],
+	# 대외
+	"경상수지": ["경상수지 흑자", "경상수지 규모", "경상수지 흑자 규모"],
+	"무역수지": ["무역수지 흑자", "무역수지 규모"],
+	"수출 증가율": ["수출증가율", "수출 증가", "수출 증감률", "총수출 증가율", "수출액 증가율"],
+	"수입 증가율": ["수입증가율", "수입 증가", "수입 증감률", "총수입 증가율", "수입액 증가율"],
+	"수출액": ["총수출", "총수출액", "수출 규모"],
+	"수입액": ["총수입", "총수입액", "수입 규모"],
+	# 재정·가계
+	"국가채무 비율": ["국가채무비율", "GDP 대비 국가채무", "GDP 대비 국가채무 비율", "국가채무/GDP"],
+	"관리재정수지 비율": ["GDP 대비 관리재정수지", "GDP 대비 관리재정수지 비율"],
+	"가계부채": ["가계부채 규모", "가계부채 잔액"],
+	"소비자심리지수": ["CCSI", "소비자심리", "소비자심리지수(CCSI)"],
 }
 
 INDICATOR_SYSTEM_PROMPT = (
@@ -48,7 +79,9 @@ INDICATOR_SYSTEM_PROMPT = (
 	"7. source는 수치를 찾은 위치입니다. 일반 본문은 text, '[표 ...]' 블록은 table, '[차트 ...]' 블록은 chart입니다.\n"
 	"8. 제목 줄에 '(추정)'이 붙은 차트 블록에서 읽은 수치는 needs_review를 true로, 그 밖의 수치는 false로 합니다.\n"
 	"9. 같은 지표·같은 시점·같은 값은 한 번만 뽑습니다.\n"
-	"10. 뽑을 수치가 없으면 빈 목록을 돌려줍니다."
+	"10. page는 수치가 적힌 쪽 번호입니다. '[표 p.12 ...]'·'[차트 p.12 ...]' 블록의 수치는 12, "
+	"일반 본문의 수치는 그 본문이 속한 '## 제목 (p.3-5)' 줄의 시작 쪽 3입니다. 알 수 없으면 null입니다.\n"
+	"11. 뽑을 수치가 없으면 빈 목록을 돌려줍니다."
 )
 
 # 허용하는 기준 시점 형식: 연 YYYY · 분기 YYYYQn · 월 YYYYMM · 일 YYYYMMDD
@@ -92,6 +125,7 @@ def _clean_indicators(indicators: list[Indicator], report_id: int) -> list[Indic
 	- 이름은 대표 이름으로 통일하고, 기준 시점은 대문자로 맞춘다 (2026q2 → 2026Q2)
 	- 기준 시점 형식이 틀렸거나 이름이 빈 지표는 버린다 (ECOS 비교 기간을 만들 수 없다)
 	- 이름·시점·값·단위가 같은 지표는 먼저 나온 것 하나만 남긴다
+	- 쪽 번호가 1보다 작으면 None으로 바꾼다 (잘못 읽은 쪽을 비교표에 보이지 않게 한다)
 	"""
 	cleaned: list[Indicator] = []
 	seen: set[tuple[str, str, float, str]] = set()
@@ -105,19 +139,25 @@ def _clean_indicators(indicators: list[Indicator], report_id: int) -> list[Indic
 		if key in seen:
 			continue
 		seen.add(key)
-		cleaned.append(item.model_copy(update={"report_id": report_id, "name": name, "period": period, "unit": unit}))
+		page = item.page if item.page is not None and item.page >= 1 else None
+		cleaned.append(item.model_copy(update={"report_id": report_id, "name": name, "period": period, "unit": unit, "page": page}))
 	return cleaned
 
 
 def _request_indicators(text: str) -> IndicatorList | None:
 	"""보고서 본문을 LLM에 보내 지표 목록을 받는다. 결과를 읽지 못하면 None.
 
-	get_chat_model은 import할 때 .env를 읽는 모듈에 있어서, 이 함수 안에서 불러온다
+	llm_client는 import할 때 .env를 읽는 모듈에 있어서, 이 함수 안에서 불러온다
 	(테스트가 .env 없이도 extract_indicators의 나머지 로직을 확인할 수 있게 하려는 것).
+	지표 추출은 본문의 수치를 옮겨 적는 일이라 추론 강도를 낮춘다.
+	(gpt-5-mini는 추론에 max_tokens를 다 써 버리면 답이 비어 LengthFinishReasonError가 난다)
 	"""
-	from hri.llm.llm_client import get_chat_model
 
-	model = get_chat_model(max_tokens=INDICATOR_MAX_TOKENS).with_structured_output(IndicatorList)
+	model = ChatOpenAI(
+		model=MODEL,
+		max_tokens=INDICATOR_MAX_TOKENS,
+		reasoning_effort="low",
+	).with_structured_output(IndicatorList)
 	messages = [
 		{"role": "system", "content": INDICATOR_SYSTEM_PROMPT},
 		{"role": "user", "content": f"[보고서 본문]\n{text}"},
@@ -165,6 +205,10 @@ SYSTEM_FONT_NAMES = ["NanumGothic", "Malgun Gothic", "AppleGothic", "Noto Sans C
 EMPTY_CELL = "-"  # 그 보고서에 없는 지표 칸
 REVIEW_MARK = "*"  # 차트에서 읽어 확인이 필요한 값(needs_review) 표시
 REVIEW_NOTE = f"{REVIEW_MARK} 차트에서 읽은 추정값이라 확인이 필요합니다."
+DIFF_HEADER = "차이(최대−최소)"  # 보고서 2개 이상을 비교할 때 표 맨 끝에 붙이는 열 이름
+ECOS_TITLE = "### ECOS 참고 (한국은행)"  # 표 아래에 붙이는 ECOS 섹션 제목
+ECOS_NOTE = "ECOS 값은 한국은행 통계라서 보고서 수치와 기준(계절조정·전기비 등)이 다를 수 있습니다."
+MAX_ECOS_ROWS = 6  # ECOS 값은 최근 몇 줄까지 보여 줄지
 MAX_UNIT_GROUPS = 3  # 차트 하나에 그리는 단위 묶음 수 (단위가 같은 지표끼리 한 칸)
 MAX_BARS_PER_GROUP = 8  # 한 칸에 그리는 지표·시점 수 (너무 많으면 글자가 겹친다)
 LEGEND_TITLE_LENGTH = 20  # 범례에 쓰는 보고서 제목의 최대 글자 수
@@ -179,10 +223,24 @@ def _format_value(value: float) -> str:
 	return "0" if text in ("-0", "") else text
 
 
-def _report_titles(report_ids: list[int]) -> dict[int, str]:
-	"""report_id → 표 머리글에 쓸 보고서 제목. 제목이 같은 보고서가 있으면 '제목 (#번호)'로 구분한다."""
-	found = {r.report_id: r.title for r in search_reports("")}
-	titles = {rid: found.get(rid) or f"보고서 #{rid}" for rid in report_ids}
+def _file_name(file_path: str) -> str:
+	"""저장 경로(data/raw/sample.pdf)에서 파일 이름(sample.pdf)만 꺼낸다. 경로가 비어 있으면 ''."""
+	return PurePosixPath((file_path or "").replace("\\", "/")).name
+
+
+def _report_titles(report_ids: list[int], with_file: bool = False) -> dict[int, str]:
+	"""report_id → 표 머리글·차트 범례에 쓸 보고서 이름.
+
+	with_file이면 '제목 (파일명.pdf)'처럼 업로드한 파일 이름을 붙인다 (파일 경로를 모르면 제목만).
+	이름이 같은 보고서가 있으면 '이름 (#번호)'로 구분한다.
+	"""
+	found = {r.report_id: r for r in search_reports("")}
+	titles: dict[int, str] = {}
+	for rid in report_ids:
+		report = found.get(rid)
+		title = (report.title if report else "") or f"보고서 #{rid}"
+		file_name = _file_name(getattr(report, "file_path", "")) if report and with_file else ""
+		titles[rid] = f"{title} ({file_name})" if file_name else title
 	counts: dict[str, int] = {}
 	for title in titles.values():
 		counts[title] = counts.get(title, 0) + 1
@@ -218,11 +276,32 @@ def _rows_to_markdown(header: list[str], body: list[list[str]]) -> str:
 	return "\n".join(lines)
 
 
+def _format_cell(item: Indicator) -> str:
+	"""표 칸에 넣을 글자: 값 + 확인 필요 '*' + 출처 쪽. 예: '2.4', '1,390*', '2.4 (p.12)'."""
+	text = _format_value(item.value) + (REVIEW_MARK if item.needs_review else "")
+	return f"{text} (p.{item.page})" if item.page else text
+
+
+def _diff_cell(items: list[Indicator], unit: str) -> str:
+	"""보고서들의 값 차이(최대값 − 최소값)를 칸 글자로 만든다. 값이 2개 미만이면 '-'.
+
+	단위가 %이면 차이는 %p로 적고, 그 밖의 단위는 그대로 붙인다. 차이를 만든 값 중 확인이 필요한 값이 있으면 '*'를 붙인다.
+	"""
+	if len(items) < 2:
+		return EMPTY_CELL
+	values = [item.value for item in items]
+	suffix = "%p" if unit == "%" else unit
+	mark = REVIEW_MARK if any(item.needs_review for item in items) else ""
+	return f"{_format_value(max(values) - min(values))}{suffix}{mark}"
+
+
 def build_compare_table(report_ids: list[int]) -> str:
 	"""선택한 보고서들의 지표를 한 표(Markdown)로 비교한다.
 
 	행은 (지표 이름, 시점, 단위), 열은 보고서 제목이다. 그 보고서에 없는 칸은 '-'로 채우고,
 	차트에서 읽어 확인이 필요한 값(needs_review)에는 '*'를 붙인 뒤 표 아래에 설명을 적는다.
+	열 머리글은 '제목 (파일명.pdf)'처럼 업로드한 파일 이름을 함께 적는다.
+	출처 쪽을 아는 값은 '2.4 (p.12)'처럼 쪽을 함께 적고, 보고서가 2개 이상이면 맨 끝에 값 차이(최대−최소) 열을 붙인다.
 	여러 보고서에 함께 나온 지표가 위로 온다. 지표가 하나도 없으면 빈 문자열을 돌려준다.
 	"""
 	report_ids = list(dict.fromkeys(report_ids))  # 중복 번호 제거 (순서 유지)
@@ -230,8 +309,11 @@ def build_compare_table(report_ids: list[int]) -> str:
 	if not rows:
 		return ""
 
-	titles = _report_titles(report_ids)
+	titles = _report_titles(report_ids, with_file=True)
 	header = ["지표", "시점", "단위", *(_escape_cell(titles[rid]) for rid in report_ids)]
+	with_diff = len(report_ids) >= 2  # 보고서가 하나뿐이면 비교할 대상이 없어 차이 열을 두지 않는다
+	if with_diff:
+		header.append(DIFF_HEADER)
 	body = []
 	has_review = False
 	for key in _sorted_keys(rows):
@@ -241,13 +323,51 @@ def build_compare_table(report_ids: list[int]) -> str:
 			if item is None:
 				cells.append(EMPTY_CELL)
 				continue
-			mark = REVIEW_MARK if item.needs_review else ""
 			has_review = has_review or item.needs_review
-			cells.append(_format_value(item.value) + mark)
+			cells.append(_format_cell(item))
+		if with_diff:
+			cells.append(_diff_cell(list(rows[key].values()), key[2]))
 		body.append([_escape_cell(key[0]), key[1], _escape_cell(key[2]) or EMPTY_CELL, *cells])
 
 	table = _rows_to_markdown(header, body)
 	return f"{table}\n\n{REVIEW_NOTE}" if has_review else table
+
+def build_ecos_reference(report_ids: list[int]) -> str:
+	"""비교한 보고서의 지표 중 ECOS로 확인할 지표 1개를 골라, 보고서 값과 ECOS 값을 한 표(Markdown)로 만든다.
+
+	find_usable_data()가 고른 지표(query.indicator_name)와 이름이 같은 보고서 수치를 모아 ECOS 값 옆에 보여 준다.
+	ECOS로 확인할 통계가 없거나 값을 못 가져오면 빈 문자열을 돌려준다 (비교표는 그대로 보여 주면 된다).
+	ECOS 호출 실패(ExternalApiError)는 그대로 올라가므로 부르는 쪽에서 잡는다.
+	"""
+	from hri.api.ecos_client import fetch_indicators
+	from hri.api.ecos_finder import find_usable_data
+
+	report_ids = list(dict.fromkeys(report_ids))
+	by_report = {rid: extract_indicators(rid) for rid in report_ids}
+	all_items = [item for items in by_report.values() for item in items]
+	if not all_items:
+		return ""
+
+	query = find_usable_data(all_items)
+	if query is None:
+		return ""
+	ecos_values = fetch_indicators(query, query.indicator_name)
+	if not ecos_values:
+		return ""
+
+	name = query.indicator_name.strip()
+	titles = _report_titles(report_ids, with_file=True)
+	body = []
+	for rid in report_ids:
+		for item in by_report[rid]:
+			if item.name.strip() == name:
+				body.append([_escape_cell(titles[rid]), item.period, _format_cell(item), _escape_cell(item.unit) or EMPTY_CELL])
+	for item in ecos_values[-MAX_ECOS_ROWS:]:
+		body.append([f"ECOS {query.stat_code}", item.period, _format_value(item.value), _escape_cell(item.unit) or EMPTY_CELL])
+
+	table = _rows_to_markdown(["구분", "시점", "값", "단위"], body)
+	reason = f"비교한 지표: {name}" + (f" ({query.reason})" if query.reason else "")
+	return f"{ECOS_TITLE}\n\n{reason}\n\n{table}\n\n{ECOS_NOTE}"
 
 
 def _use_korean_font() -> str | None:

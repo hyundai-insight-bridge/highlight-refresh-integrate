@@ -1,6 +1,7 @@
 """보고서 저장·조회 · insert_report, insert_sections, insert_chunks, select_sections, select_summary_json, update_summary_json, get_context_docs (김희진) / insert_tables (엄정현) / select_reports, select_report_tables (장유빈)"""
 
 import json
+import uuid
 from hri.dao.db import get_connection
 from hri.domain.schemas import Chunk, ContextDoc, Report, ReportSummary, Section, Table
 from hri.config.settings import load_settings
@@ -13,11 +14,12 @@ def _escape_like(text: str) -> str:
 	return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
-def select_reports(keyword: str) -> list[Report]:
+def select_reports(keyword: str, user_id: str | None = None) -> list[Report]:
 	"""제목 또는 발행기관에 keyword가 들어 있는 보고서를 발행일 최신순으로 조회한다.
 
 	reports와 chunks를 LEFT JOIN해 보고서별 청크 수(chunk_count)를 센다.
 	청크가 아직 없는 보고서도 목록에 포함되고, keyword가 ''이면 전체를 조회한다.
+	user_id가 있으면 그 사용자가 올린 보고서만, None이면 모든 보고서를 조회한다.
 	"""
 	pattern = f"%{_escape_like(keyword)}%"
 	sql = """
@@ -25,13 +27,16 @@ def select_reports(keyword: str) -> list[Report]:
 		       r.file_path, r.uploaded_by, COUNT(c.chunk_no) AS chunk_count
 		FROM reports r
 		LEFT JOIN chunks c ON c.report_id = r.report_id
-		WHERE r.title LIKE %s OR r.publisher LIKE %s
+		WHERE (r.title LIKE %s OR r.publisher LIKE %s)
+		  AND (%s IS NULL
+       	OR r.uploaded_by = %s
+    	OR r.uploaded_by IN (SELECT user_id FROM users WHERE role = 'admin'))
 		GROUP BY r.report_id
 		ORDER BY r.published_date DESC, r.report_id DESC
 	"""
 	with get_connection() as conn:
 		with conn.cursor() as cur:
-			cur.execute(sql, (pattern, pattern))
+			cur.execute(sql, (pattern, pattern, user_id, user_id))
 			rows = cur.fetchall()
 	return [Report(**row) for row in rows]
 
@@ -59,7 +64,26 @@ def select_report_tables(report_id: int) -> list[Table]:
 
 
 # insert_report, insert_sections, insert_chunks (김희진)
-DEFAULT_PUBLISHER = "현대경제연구원"
+def make_file_hash(file_path: str, user_id: str) -> str:
+	"""파일 내용과 올린 사람으로 36자 식별값(file_hash)을 만든다.
+	같은 사람이 같은 파일을 올리면 항상 같은 값이다 (uuid5는 SHA-1 기반, hashlib 없이 사용).
+	reports.file_hash(VARCHAR(36), UNIQUE)에 그대로 들어간다.
+	"""
+	with open(file_path, "rb") as file:
+		content = file.read()
+	return str(uuid.uuid5(uuid.NAMESPACE_OID, f"{user_id}\0" + content.decode("latin-1")))
+
+def select_report_by_hash(file_hash: str) -> Report | None:
+	"""file_hash가 같은 보고서를 찾는다. 없으면 None. (중복 업로드 확인용)"""
+	sql = "SELECT report_id, title, publisher, published_date, page_count, file_path, uploaded_by, file_hash FROM reports WHERE file_hash = %s"
+	with get_connection() as conn:
+		with conn.cursor() as cur:
+			cur.execute(sql, (file_hash,))
+			row = cur.fetchone()
+
+	return Report(**row) if row else None
+
+
 def insert_report(conn: Connection, report: Report) -> int:
 	"""
 	reports 테이블에 보고서 1건을 INSERT하고 새로 생긴 report_id를 돌려준다.
@@ -73,7 +97,7 @@ def insert_report(conn: Connection, report: Report) -> int:
 	)
 	params = (
 		report.title,
-		report.publisher or DEFAULT_PUBLISHER,
+		report.publisher or "no_publisher",
 		report.published_date,
 		report.page_count,
 		report.file_path,

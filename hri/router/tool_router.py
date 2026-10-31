@@ -101,6 +101,8 @@ def merge_reports(report_ids: ReportIds) -> str:
 
 	try:
 		return _to_json(_dump(run_merge(report_ids)))
+	except ValueError as error:
+		return str(error)
 	except OutputFormatError:
 		logger.exception("도구 병합 실패: report_ids=%s", report_ids)
 		return "보고서를 병합하지 못했습니다."

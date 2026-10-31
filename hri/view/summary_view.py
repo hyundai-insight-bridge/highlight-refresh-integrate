@@ -8,13 +8,19 @@ from hri.service.report_service import search_reports
 logger = logging.getLogger(__name__)
 
 # app.py의 요약, 분석 탭 id (report_view.SUUMARY_TAB_ID와 같아야 한다)
+MAX_MERGE_REPORTS = 5
 SUMMARY_TAB_ID = "summary"
 NEED_REPORT_MESSAGE = "보고서를 선택하세요."
 NEED_REQUEST_MESSAGE = "요청 내용을 입력하세요."
+NEED_MERGE_MESSAGE = "병합하려면 보고서를 2개 이상 선택하세요."
 SUMMARY_FAIL_MESSAGE = "요약을 만들지 못했습니다."
+MERGE_FAIL_MESSAGE = "병합 결과를 만들지 못했습니다."
+MERGE_ERROR_MESSAGE = "병합 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요."
 SUMMARY_ERROR_MESSAGE = "요약 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요."
 REQUEST_ERROR_MESSAGE = "요청을 처리하지 못했습니다."
 EMPTY_ANSWER_MESSAGE = "요청을 처리했지만 표시할 답변이 없습니다."
+MERGE_TOO_MANY_MESSAGE = "한번에 병합할 수 있는 보고서는 {max}개 까지 입니다."
+MERGE_DUPLICATE_NOTE = "⚠️ 제목이 같은 보고서가 있습니다. 같은 문서를 중복 업로드했다면 같은 내용이 '공통 의견'으로 나올 수 있습니다."
 VIEW_THREE_LINES = "3줄 요약"
 VIEW_SECTIONS = "섹션별 요약"
 VIEW_CHOICES = [VIEW_THREE_LINES, VIEW_SECTIONS]
@@ -39,6 +45,13 @@ def _run_agent(request: str, report_ids: list[int]):
 
     return run_agent_with_tools(request, report_ids)
 
+def _merge_reports(report_ids: list[int]):
+    """merge_reports를 호출하는 시점에 불러와 실행한다
+    (이유는 _summarize_report와 같다)."""
+    from hri.prompt.summary_prompt import merge_reports
+
+    return merge_reports(report_ids)
+
 def _report_titles() -> dict[int, str]:
     """report_id -> 제목.
     목록을 못 가져와도 요약은 되게 빈 dict를 돌려준다."""
@@ -47,6 +60,10 @@ def _report_titles() -> dict[int, str]:
     except Exception:
         logger.exception("보고서 제목 조회 실패")
         return {}
+
+def _escape_tilde(text: str) -> str:
+    """Markdown에서 ~가 취소선으로 해석되지 않게 \\~로 바꾼다 (예: '2~3%')"""
+    return (text or "").replace("~", "\\~")
 
 def _page_label(start: int | None, end: int | None) -> str:
     """쪽 범위 문구.
@@ -59,17 +76,29 @@ def _page_label(start: int | None, end: int | None) -> str:
 
 def _summary_markdown(title: str, summary, view: str = VIEW_THREE_LINES) -> str:
     """보고서 1건의 요약(ReportSummary) 중 고른 방식(3줄 요약 / 섹션별 요약)만 Markdown으로 바꾼다"""
-    lines = [f"### {title}"]
+    lines = [f"### {_escape_tilde(title)}"]
 
     if view == VIEW_SECTIONS:
         lines.append("**섹션별 요약**")
         for s in summary.sections:
             pages = _page_label(s.start_page, s.end_page)
-            heading = f"**{s.title}**" + (f"{pages}" if pages else "")
-            lines.append(f"- {heading}: {s.summary}")
+            heading = f"**{_escape_tilde(s.title)}**" + (f"{pages}" if pages else "")
+            lines.append(f"- {heading}: {_escape_tilde(s.summary)}")
     else:
         lines.append("**3줄 요약**")
-        lines += [f"{i}. {line}" for i, line in enumerate(summary.three_lines, 1)]
+        lines += [f"{i}. {_escape_tilde(line)}" for i, line in enumerate(summary.three_lines, 1)]
+
+    return "\n".join(lines)
+
+def _merge_markdown(titles: list[str], merged, notes: list[str] | None = None) -> str:
+    """병합 결과(MergedReport)를 공통 의견, 차이점, 종합 결론 Markdown으로 바꾼다."""
+    lines = ["### 병합 결과", f"**대상 보고서**: {_escape_tilde(', '.join(titles))}"]
+    lines += notes or []
+    lines += ["", "**공통 의견**"]
+    lines += [f"- {_escape_tilde(item)}" for item in merged.common] or ["- (공통 의견 없음)"]
+    lines += ["", "**차이점**"]
+    lines += [f"- {_escape_tilde(item)}" for item in merged.differences] or ["- (뚜렷한 차이 없음)"]
+    lines += ["", "**종합 결론**", _escape_tilde(merged.conclusion)]
 
     return "\n".join(lines)
 
@@ -88,18 +117,34 @@ def build_summary_tab():
         report_dropdown = gr.Dropdown(label="보고서 선택 (여러 개 가능)", choices=[], multiselect=True)
         with gr.Row():
             with gr.Column(scale=1):
+                view_radio = gr.Radio(label="요약 방식", choices=VIEW_CHOICES, value=VIEW_THREE_LINES)
+            with gr.Column(scale=1):
                 summarize_btn = gr.Button("요약하기", variant="primary")
                 summary_result = gr.Markdown()
-
-            with gr.Column(scale=1):
-                view_radio = gr.Radio(label="요약 방식", choices=VIEW_CHOICES, value=VIEW_THREE_LINES)
+            with gr.Column():
+                merge_btn = gr.Button("병합하기 (2개 이상 선택)")
+                merge_result = gr.Markdown()
+        with gr.Row():
+            with gr.Column():
+                request = gr.Textbox(
+                    label="자연어 요청 (검증·ECOS 조회·병합 등 도구 자동 선택)",
+                    placeholder="예) 선택한 보고서 수치를 ECOS 통계로 검증해줘",
+                    lines=2,
+                )
+                request_btn = gr.Button("요청 실행")
+                request_result = gr.Markdown()
 
     summary_components.update(
         tab=tab,
         report_dropdown=report_dropdown,
         summarize_btn=summarize_btn,
         summary_result=summary_result,
-        view_radio=view_radio
+        view_radio=view_radio,
+        merge_btn=merge_btn,
+        merge_result=merge_result,
+        request=request,
+        request_btn=request_btn,
+        request_result=request_result,
     )
     return tab
 
@@ -135,6 +180,58 @@ def on_summarize(report_ids: list[int], view: str = VIEW_THREE_LINES) -> str:
     return "\n\n---\n\n".join(parts)
 
 @safe_call
+def on_merge(report_ids: list[int]) -> str:
+    """병합하기 버튼: 선택한 보고서 2~5개를 merge_reports()로 병합해 공통 의견·차이점·결론을 보여 준다. (제너레이터)
+    
+    순서
+    1. 2개 미만이거나 MAX_MERGE_REPORTS개를 넘으면 안내만 보여준다
+    2. 보고서마다 요약을 먼저 준비하며 '(n/전체)' 진행 상황을 보여 준다 (캐시가 있으면 LLM 호출 없음)
+        한 보고서라도 요약에 실패하면 그 보고서 이름과 사유를 보여 주고 병합하지 않는다
+    3. merge_reports()로 병합한다 (2단계에서 요약이 저장돼 있어 요약을 다시 만들지 않는다)
+    4. 같은 제목의 보고서가 있으면 결과 위에 경고를 붙인다
+
+    입력: report_ids (선택한 보고서 번호 목록)
+    yield 값: str (진행 상황 또는 결과 Markdown)
+    """
+    ids = list(dict.fromkeys(report_ids or []))
+
+    if len(ids) < 2:
+        yield NEED_MERGE_MESSAGE
+        return
+    if len(ids) > MAX_MERGE_REPORTS:
+        yield MERGE_TOO_MANY_MESSAGE.format(max=MAX_MERGE_REPORTS)
+        return
+    titles = _report_titles()
+    names = [titles.get(i, f"보고서 {i}") for i in ids]
+
+    # 2. 보고서마다 요약 준비
+    for no, (report_id, name) in enumerate(zip(ids, names), 1):
+        yield f"⏳ 요약 준비 중 ({no}/{len(ids)}): {name}"
+        try:
+            _summarize_report(report_id)
+        except OutputFormatError:
+            yield f"### 병합하지 못했습니다\n**{name}**: {SUMMARY_FAIL_MESSAGE}"
+            return
+        except Exception:
+            logger.exception("병합 전 요약 실패: report_id=%s", report_id)
+            yield f"### 병합하지 못했습니다\n**{name}**: {SUMMARY_ERROR_MESSAGE}"
+            return
+
+    # 3. 병합
+    yield f"⏳ 병합 중 ({len(ids)}개 보고서)"
+    try:
+        merged = _merge_reports(ids)
+    except OutputFormatError:
+        yield MERGE_FAIL_MESSAGE
+        return
+    except Exception:
+        logger.exception("병합 실패: report_ids=%s", ids)
+        yield MERGE_ERROR_MESSAGE
+        return
+    notes = [MERGE_DUPLICATE_NOTE] if len(set(names)) < len(names) else []
+    yield _merge_markdown(names, merged, notes)
+
+@safe_call
 def on_request(request: str, report_ids: list[int]) -> str:
     """요청 실행 버튼: 자연어 요청을 run_agent_with_tools()에 보내고 결과와 실행한 도구 이름을 보여 준다.
     보고서를 고르지 않아도 실행한다 (ECOS 조회처럼 보고서가 필요 없는 도구가 있고, 보고서가 필요한 도구는 도구 쪽에서 안내한다).
@@ -154,7 +251,7 @@ def on_request(request: str, report_ids: list[int]) -> str:
         return REQUEST_ERROR_MESSAGE
 
     answer, tool_names = result if isinstance(result, tuple) else (result, [])
-    answer = (answer or "").strip() or EMPTY_ANSWER_MESSAGE
+    answer = _escape_tilde((answer or "").strip()) or EMPTY_ANSWER_MESSAGE
 
     if not tool_names:
         return answer

@@ -29,7 +29,7 @@ def _select_event(row, row_value):
 
 
 def test_search_builds_rows_and_ids(monkeypatch):
-	monkeypatch.setattr(report_view, "search_reports", lambda k: [_report(7, "A보고서"), _report(5, "B보고서", None, None, 0)])
+	monkeypatch.setattr(report_view, "search_reports", lambda k, user_id=None: [_report(7, "A보고서"), _report(5, "B보고서", None, None, 0)])
 	rows, ids, message = on_report_search("보고서")
 	assert rows == [["A보고서", "HRI", "2026-07-31", 3], ["B보고서", NO_PUBLISHER, "", 0]]
 	assert ids == [7, 5]
@@ -37,7 +37,7 @@ def test_search_builds_rows_and_ids(monkeypatch):
 
 
 def test_search_no_result(monkeypatch):
-	monkeypatch.setattr(report_view, "search_reports", lambda k: [])
+	monkeypatch.setattr(report_view, "search_reports", lambda k, user_id=None: [])
 	assert on_report_search("없음") == ([], [], NO_RESULT_MESSAGE)
 
 

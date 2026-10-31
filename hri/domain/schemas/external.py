@@ -25,6 +25,8 @@ class Indicator(BaseModel):
 	period: str = Field(description="수치의 기준 시점. 연 YYYY, 분기 YYYYQn, 월 YYYYMM, 일 YYYYMMDD 중 하나 (예: 2025, 2026Q2, 202607)")
 	# 출처 위치: 본문·표·차트 셋 중 하나만 받는다
 	source: Literal["text", "table", "chart"] = Field(default="text", description="수치를 찾은 위치 (본문 text / 표 table / 차트 chart)")
+	# 출처 쪽: 수치가 적힌 쪽 번호. 표·차트는 블록 머리글의 쪽, 본문은 속한 섹션의 시작 쪽이라 본문은 정확한 쪽이 아닐 수 있다
+	page: int | None = Field(default=None, description="수치가 적힌 쪽 번호 (1부터). 표·차트는 '[표 p.12 ...]'의 12, 본문은 속한 섹션 줄 '## 제목 (p.3-5)'의 시작 쪽 3. 알 수 없으면 null")
 	# 사람 확인 필요 여부: 차트에서 읽은 값처럼 정확하지 않을 수 있으면 True
 	needs_review: bool = Field(default=False, description="수치가 정확한지 사람이 확인해야 하면 true (예: 차트에서 눈으로 읽은 값)")
 

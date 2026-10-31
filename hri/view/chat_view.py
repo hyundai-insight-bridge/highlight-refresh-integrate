@@ -6,7 +6,7 @@ import gradio as gr
 from hri.dao.qa_log_dao import update_feedback
 from hri.domain.schemas import AnswerResult, TermCard
 from hri.exception.errors import ExternalApiError, InvalidInputError, OutputFormatError
-from hri.service.report_service import search_reports
+from hri.service.report_service import owner_filter, search_reports
 from hri.service.term_service import MAX_TERM_LENGTH, explain_term
 
 logger = logging.getLogger(__name__)
@@ -116,10 +116,13 @@ def on_suggest_click(question: str) -> str:
 def build_chat_tab():
 	"""질의응답 탭 화면을 만든다. (gr.Blocks의 gr.Tabs 안에서 호출)
 
-	화면을 반으로 나눈다.
-	- 왼쪽 반(챗봇): 맨 위에 페르소나(입문자/실무자/전문가)·보고서 선택(여러 개 가능)·검색 옵션(k, MMR),
-	  그 아래에 대화창(gr.Chatbot)·질문 입력칸·전송 버튼·출처·추천 질문 버튼 3개.
-	- 오른쪽 반(용어 검색): 눌러서 접고 펼치는 '용어 검색' 메뉴(gr.Accordion). 안의 검색 창은
+	화면을 소스(3)·채팅(6) 두 칸으로 나누고, 스튜디오는 오른쪽에서 펼쳐지는 사이드바로 둔다. (UI 레퍼런스: 소스·채팅·스튜디오 3단 배치)
+	- 왼쪽(소스): 보고서 선택(여러 개 가능)·페르소나(입문자/실무자/전문가)·검색 옵션(k, MMR),
+	  답변이 끝나면 그 아래에 출처가 나온다.
+	- 가운데(채팅): 추천 질문 버튼 3개(한 줄) → 대화창(gr.Chatbot) → 👍/👎 → 질문 입력칸·전송 버튼.
+	  질문 입력칸은 추천 질문 버튼보다 먼저 만들어야 해서 render=False로 만들고, 화면 맨 아래에서 render()로 놓는다.
+	- 오른쪽(스튜디오): gr.Sidebar(position="right")로 만들어 처음에는 접어 두고, 화면 오른쪽 끝의
+	  버튼(Gradio 기본 제공)을 누르면 펼치거나 접는다. 안의 '용어 카드' 메뉴(gr.Accordion) 검색 창은
 	  build_term_panel(류현수)이 만든다.
 	추천 질문 버튼은 처음에 시작 질문 3개를 보여 주고(build_suggest_buttons, 류현수), 답변이 끝난 뒤
 	respond_stream()이 후속 질문으로 바꾼다. 버튼을 누르면 질문 입력칸에 그 질문이 들어간다(on_suggest_click).
@@ -130,36 +133,45 @@ def build_chat_tab():
 	반환: gr.Tab (컴포넌트는 chat_components로 꺼내 쓴다)
 	"""
 	with gr.Tab("질의응답", id=CHAT_TAB_ID, visible=False) as tab:
-		with gr.Row():
-			# 왼쪽 반: 챗봇
-			with gr.Column(scale=1):
-				with gr.Row():
-					persona = gr.Radio(PERSONA_CHOICES, value=DEFAULT_PERSONA, label="페르소나", scale=2)
-					report_dropdown = gr.Dropdown(label="보고서 선택 (여러 개 가능)", choices=[], multiselect=True, scale=3)
+		with gr.Row(equal_height=False):
+			# 왼쪽: 소스 (보고서 선택·페르소나·검색 옵션, 답변 뒤에는 출처)
+			with gr.Column(scale=3, variant="panel"):
+				gr.Markdown("#### 소스")
+				report_dropdown = gr.Dropdown(label="보고서 선택 (여러 개 가능)", choices=[], multiselect=True)
+				persona = gr.Radio(PERSONA_CHOICES, value=DEFAULT_PERSONA, label="페르소나")
 				with gr.Accordion("검색 옵션", open=False):
 					k = gr.Slider(1, 10, value=DEFAULT_K, step=1, label="가져올 근거 수 (k)")
 					use_mmr = gr.Checkbox(label="MMR 사용 (서로 다른 근거 고르기)", value=False)
-				chatbot = gr.Chatbot(label="질의응답", height=480)
-				with gr.Row():
-					message = gr.Textbox(
-						label="질문",
-						placeholder="선택한 보고서에 대해 궁금한 점을 물어보세요",
-						lines=1,
-						scale=5,
-					)
-					send_btn = gr.Button("전송", variant="primary", scale=1)
+				# 출처: 답변이 끝나면 respond_stream()이 채운다 (없으면 빈칸)
 				sources = gr.Markdown()
+			# 가운데: 채팅 (추천 질문 → 대화창 → 질문 입력칸)
+			with gr.Column(scale=6, variant="panel"):
+				gr.Markdown("#### 채팅")
 				# 추천 질문: 처음에는 시작 질문(STARTER_QUESTIONS, 류현수)을 보여 주고, 답변이 끝나면 후속 질문으로 바꾼다
-				suggest_buttons = build_suggest_buttons(message)
+				message = gr.Textbox(
+					show_label=False,
+					placeholder="선택한 보고서에 대해 궁금한 점을 물어보세요",
+					lines=1,
+					scale=1,
+					container=False,
+					render=False,
+				)
+				with gr.Row():
+					suggest_buttons = build_suggest_buttons(message)
+				chatbot = gr.Chatbot(show_label=False, height=520)
 				# 피드백: 처음에는 숨기고, 기록(log_id)이 남은 답변이 끝나면 보인다 (connect_feedback_events, 류현수)
 				with gr.Row():
-					like_btn = gr.Button("👍", visible=False, scale=0)
-					dislike_btn = gr.Button("👎", visible=False, scale=0)
-			# 오른쪽 반: 용어 검색 (접고 펼치는 메뉴)
-			with gr.Column(scale=1):
-				with gr.Accordion("용어 검색", open=False) as term_menu:
-					# 용어 검색 창 (류현수). 페르소나를 같이 써서 질문 답변과 같은 난이도로 설명한다
-					build_term_panel(persona)
+					like_btn = gr.Button("👍", visible=False, scale=0, min_width=60, size="sm")
+					dislike_btn = gr.Button("👎", visible=False, scale=0, min_width=60, size="sm")
+				with gr.Row(equal_height=True):
+					message.render()
+					send_btn = gr.Button("전송", variant="primary", scale=0, min_width=90)
+		# 오른쪽: 스튜디오 (용어 카드). gr.Sidebar라서 화면 오른쪽 끝의 버튼으로 펼치고 접는다 (처음에는 접힘)
+		with gr.Sidebar(label="용어 검색", position="right", open=False) as studio:
+			gr.Markdown("#### 용어검색")
+			with gr.Accordion("용어 카드", open=True) as term_menu:
+				# 용어 검색 창 (류현수). 페르소나를 같이 써서 질문 답변과 같은 난이도로 설명한다
+				build_term_panel(persona)
 
 	chat_components.update(
 		tab=tab,
@@ -175,6 +187,7 @@ def build_chat_tab():
 		k=k,
 		use_mmr=use_mmr,
 		term_menu=term_menu,
+		studio=studio,
 	)
 	return tab
 
@@ -182,10 +195,11 @@ def build_chat_tab():
 def refresh_report_choices(state: dict, selected: list[int] | None):
 	"""보고서 드롭다운의 선택지를 DB의 보고서 목록으로 채운다. (질의응답 탭을 열 때 실행)
 
-	선택지는 (제목, report_id) 쌍이다. 이미 고른 보고서가 있으면 그대로 두고,
+	선택지는 (제목, report_id) 쌍이다. 로그인한 사용자 기준으로 일반 사용자는 본인이 올린 보고서만,
+	관리자는 전체를 보여 준다. 이미 고른 보고서가 있으면 그대로 두고,
 	없으면 보고서 목록 화면에서 고른 state['report_ids']를 고른 상태로 둔다. 목록에 없는 번호는 뺀다.
 	"""
-	reports = search_reports("")
+	reports = search_reports("", user_id=owner_filter((state or {}).get("user")))
 	choices = [(r.title, r.report_id) for r in reports]
 	existing = {r.report_id for r in reports}
 	wanted = selected or (state or {}).get("report_ids") or []

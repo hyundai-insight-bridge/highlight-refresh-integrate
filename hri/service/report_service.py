@@ -1,14 +1,32 @@
-"""보고서 목록·본문 · search_reports, get_report_text (장유빈)"""
+"""보고서 목록·본문 · search_reports, owner_filter, get_report_text (장유빈)"""
 from hri.dao.report_dao import select_report_tables, select_reports, select_sections
 from hri.domain.schemas.report import Report, Section, Table
 
 
-def search_reports(keyword: str = "", limit: int | None = None) -> list[Report]:
+def owner_filter(user) -> str | None:
+	"""목록을 걸러 볼 user_id를 정한다. (state['user'] 또는 User 객체를 받는다)
+
+	관리자(admin)는 전체를 보므로 None, 일반 사용자는 본인 아이디를 돌려준다.
+	로그인 전(user가 None)이면 어떤 보고서와도 맞지 않는 ''를 돌려줘 아무것도 보이지 않게 한다.
+	"""
+	if user is None:
+		return ""
+	if isinstance(user, dict):
+		role, user_id = user.get("role"), user.get("user_id")
+	else:
+		role, user_id = getattr(user, "role", None), getattr(user, "user_id", None)
+	if role == "admin":
+		return None
+	return user_id or ""
+
+
+def search_reports(keyword: str = "", limit: int | None = None, user_id: str | None = None) -> list[Report]:
 	"""제목·발행기관 키워드로 보고서를 검색해 발행일 최신순으로 돌려준다.
 
 	keyword가 ''이면 전체를, limit이 있으면 상위 limit개만 돌려준다.
+	user_id가 있으면 그 사용자가 올린 보고서만, None이면 모든 보고서를 돌려준다.
 	"""
-	reports = select_reports(keyword.strip())
+	reports = select_reports(keyword.strip(), user_id)
 	return reports[:limit] if limit is not None else reports
 
 

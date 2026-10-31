@@ -11,12 +11,21 @@ import gradio as gr
 from hri.config.settings import load_settings
 from hri.graph.registry import get_ingest_graph, get_qa_graph, get_summary_graph, get_agent_graph
 from hri.view.user_view import build_login_tab, on_login, on_logout, login_components
-from hri.view.report_view import build_upload_tab, build_report_list_panel, on_view_summary, on_go_chat, on_report_select, on_upload, report_list_components, upload_components
-from hri.view.summary_view import build_summary_tab, on_summarize, on_request, summary_components
+from hri.view.report_view import build_upload_tab, build_report_list_panel, on_view_summary, on_go_chat, on_report_search, on_report_select, on_upload, report_list_components, upload_components
+from hri.view.summary_view import build_summary_tab, on_summarize, on_request, summary_components, on_merge
 from hri.view.chat_view import build_chat_tab, chat_components, connect_chat_events, refresh_report_choices
 from hri.view.indicator_view import on_compare
 from hri.view.history_view import build_history_tab, history_components, on_load_history, on_restore
-from hri.view.admin_view import build_admin_tab
+from hri.view.admin_view import build_admin_tab, admin_components, on_refresh
+
+
+# 화면 전체 테마 (UI 레퍼런스: 옅은 회색 배경·파란 강조색·둥근 모서리, CSS 없이 Gradio 테마 옵션만 사용)
+APP_THEME = gr.themes.Soft(
+	primary_hue="blue",
+	neutral_hue="slate",
+	radius_size="lg",
+	font=[gr.themes.GoogleFont("Noto Sans KR"), "sans-serif"],
+)
 
 
 def init_state():
@@ -54,25 +63,25 @@ def clear_other_user_screen(state, screen_owner):
 	3. 다른 사람이면 질의응답·요약·내 기록·업로드·지표 비교 화면 내용을 비운다
 
 	- 질문 기록 자체는 DB(qa_logs)에 남아 있어서, 다시 로그인하면 내 기록 탭에서 언제든 볼 수 있다
-	- 돌려주는 값 14개는 build_app()의 outputs 순서와 같아야 한다
+	- 돌려주는 값 17개는 build_app()의 outputs 순서와 같아야 한다
 	  [화면 주인, 대화창, 질문 입력칸, 출처, 👍, 👎, 질의응답 보고서 선택,
 	   요약 보고서 선택, 요약 결과, 요청, 요청 결과,
 	   기록 표, 대화 선택, 업로드 결과, 비교표, 비교 차트]
 
 	입력: state (gr.State), screen_owner (지금 화면 내용의 주인 user_id, 처음에는 None)
-	출력: list (값 14개)
+	출력: list (값 17개)
 	"""
 	keep = gr.update()
 
 	# 1) 로그인 실패면 그대로
 	if state["user"] == None:
-		return [screen_owner] + [keep] * 13
+		return [screen_owner] + [keep] * 16
 
 	user_id = state["user"]["user_id"]
 
 	# 2) 처음 로그인이거나 같은 사람이면 화면 그대로
 	if screen_owner == None or screen_owner == user_id:
-		return [user_id] + [keep] * 13
+		return [user_id] + [keep] * 16
 
 	# 3) 다른 사람이면 화면 내용 비우기
 	return [
@@ -85,6 +94,9 @@ def clear_other_user_screen(state, screen_owner):
 		gr.update(value=[]),  # 질의응답 보고서 선택
 		gr.update(value=[]),  # 요약 보고서 선택
 		"",  # 요약 결과
+		"",  # 병합 결과
+		"",  # 요청
+		"",  # 요청 결과
 		"",  # 기록 표 (내 기록 탭을 열면 다시 채워짐)
 		gr.update(choices=[], value=None),  # 대화 선택
 		"",  # 업로드 결과
@@ -129,19 +141,23 @@ def build_app():
 
 		# 제목, 로그아웃 버튼 (로그아웃 버튼은 처음에 숨김)
 		with gr.Row():
-			gr.Markdown("## 📊 HRI Insight Bridge - 경제분석보고서 AI 요약·질의응답")
+			# 제목은 gr.HTML로 둔다 (gr.Markdown은 칸에 스크롤이 생겨서 Windows에서 위아래 화살표가 보임)
+			gr.HTML("<h2>📊 HRI Insight Bridge - 경제분석보고서 AI 요약·질의응답</h2>")
 			logout_btn = gr.Button("로그아웃", size="sm", scale=0, visible=False)
 
 		with gr.Tabs(selected="login") as tabs:
 			# 로그인 탭
 			login_tab = build_login_tab()
 
+			# 관리자 탭 (관리자 로그인 때 선택이 되려면 숨겨진 탭들보다 앞에 있어야 해서 로그인 탭 바로 뒤에 둠)
+			admin_tab = build_admin_tab()			
+
 			# 보고서 탭
 			with gr.Tab("보고서", id="report", visible=False) as report_tab:
 				with gr.Tabs():
 					# 보고서 목록·검색
 					with gr.Tab("보고서 목록·검색", id="report_list"):
-						report_list, go_summary_btn, go_chat_btn = build_report_list_panel()
+						report_list, go_summary_btn, go_chat_btn = build_report_list_panel(state)
 
 					# 지표 비교표
 					with gr.Tab("지표 비교표", id="compare"):
@@ -156,10 +172,9 @@ def build_app():
 			# 요약·분석, 질의응답, 내 기록, 관리자 탭
 			summary_tab = build_summary_tab()
 			chat_tab = build_chat_tab()
-			# 질의응답 탭 버튼 연결 (state가 필요해서 build_app에서 부름)
-			connect_chat_events(state)
 			history_tab = build_history_tab()
-			admin_tab = build_admin_tab()
+		# 질의응답 탭 버튼 연결 (state가 필요해서 build_app에서 부름)
+		connect_chat_events(state)
 
 		# 로그인 버튼 누르면 로그인 → 다른 사람이 로그인했으면 이전 사용자의 화면 내용 비우기
 		login_components["login_btn"].click(
@@ -173,7 +188,7 @@ def build_app():
 				screen_owner,
 				chat_components["chatbot"], chat_components["message"], chat_components["sources"],
 				chat_components["like_btn"], chat_components["dislike_btn"], chat_components["report_dropdown"],
-				summary_components["report_dropdown"], summary_components["summary_result"],
+				summary_components["report_dropdown"], summary_components["summary_result"], summary_components["merge_result"], summary_components["request"], summary_components["request_result"],
 				history_components["table"], history_components["session_dropdown"],
 				upload_components["result"],
 				compare_table, compare_chart
@@ -185,6 +200,13 @@ def build_app():
 			fn=on_logout,
 			inputs=state,
 			outputs=[state, login_tab, report_tab, summary_tab, chat_tab, history_tab, admin_tab, logout_btn, tabs, compare_reports]
+		)
+
+		# 보고서 탭을 열면 보고서 목록 불러오기 (목록 메뉴가 처음부터 펼쳐져 있어서 펼칠 때 대신 여기서 불러옴)
+		report_tab.select(
+			fn=on_report_search,
+			inputs=[report_list_components["keyword"], state],
+			outputs=[report_list_components["table"], report_list_components["listed_ids"], report_list_components["message"]]
 		)
 
 		# 보고서 목록 표에서 줄을 누르면 그 보고서를 선택
@@ -236,6 +258,16 @@ def build_app():
 			outputs=[upload_components["result"], summary_components["report_dropdown"], chat_components["report_dropdown"]]
 		)
 
+		# 관리자 탭 업로드 버튼: 진행 상황·결과를 보여 주고, 끝나면 대시보드(보고서 목록 등) 갱신
+		admin_components["upload_btn"].click(
+			fn=on_upload,
+			inputs=[admin_components["file"], state],
+			outputs=[admin_components["result"], summary_components["report_dropdown"], chat_components["report_dropdown"]]
+		).then(
+			fn=on_refresh,
+			outputs=admin_components["outputs"]
+		)
+
 		# 요약·분석 탭을 열면 보고서 드롭다운 채우기 (질의응답 탭과 같은 refresh_report_choices 사용)
 		summary_components["tab"].select(
 			fn=refresh_report_choices,
@@ -248,6 +280,20 @@ def build_app():
 			fn=on_summarize,
 			inputs=[summary_components["report_dropdown"],summary_components["view_radio"]],
 			outputs=summary_components["summary_result"]
+		)
+
+		# 병합하기 버튼 누르면 선택한 보고서를 병합해서 보여주기
+		summary_components["merge_btn"].click(
+			fn=on_merge,
+			inputs=summary_components["report_dropdown"],
+			outputs=summary_components["merge_result"]
+		)
+
+		# 요청 실행 버튼 누르면 자연어 요청을 에이전트로 처리해서 결과와 실행한 도구 보여주기
+		summary_components["request_btn"].click(
+			fn=on_request,
+			inputs=[summary_components["request"], summary_components["report_dropdown"]],
+			outputs=summary_components["request_result"]
 		)
 
 	return demo
@@ -277,4 +323,4 @@ def main():
 
 	# 화면 띄우기
 	demo = build_app()
-	demo.launch(server_port=7860, theme=gr.themes.Soft())
+	demo.launch(server_port=7860, theme=APP_THEME)
